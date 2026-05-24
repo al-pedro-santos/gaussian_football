@@ -1,0 +1,6 @@
+torch 
+torchvision
+decord
+matplotlib
+numpy
+pandas
