@@ -2,9 +2,9 @@
 .env
 
 # dados brutos e processados
-# data/raw/
-# data/processed/
-# data/labels/
+data/raw/
+data/processed/
+data/labels/
 
 # arquivos de trabalho em progresso
 wip/
