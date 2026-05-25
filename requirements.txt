@@ -1,6 +1,9 @@
-torch 
+SoccerNet
+torch
 torchvision
+numpy
+opencv-python
+pandas
+tqdm
 decord
 matplotlib
-numpy
-pandas
