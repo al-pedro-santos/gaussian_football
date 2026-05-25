@@ -110,7 +110,7 @@ class VideoVGG16FeatureExtractor(nn.Module):
         vidcap = cv2.VideoCapture(vid_path)
         features = []
         success = True
-        with torch.nn_grad():
+        with torch.no_grad():
             while success:
                 success, image = vidcap.read()
                 if success:
