@@ -221,24 +221,3 @@ Dicas para reduzir custo computacional e uso de memória no preprocess:
     - sample_rate: um sample_rate menor (ex: 16000 vs 22050) reduz o
       tamanho dos arrays de áudio e o custo do cálculo do mel spectrograma.
 """
-
-
-vid_path = "/home/leticia/football/teste_video/teste_labeler.mp4"
-
-highlights = [
-    ("00:00:15", "00:00:30"),
-    ("00:02:20", "00:02:40")
-]
-
-processor = VideoAudioGetSequences(
-    clip_size=10
-)
-
-processor.preprocess(
-    vid_path,
-    highlights,
-    grayscale=True,
-    fps=15
-)
-
-processor.plot_saved_mel_spectrogram('/home/leticia/football/highlight/mel_spectograma/teste_labeler_highlight_0.npy')
