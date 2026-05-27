@@ -20,12 +20,14 @@ class VideoAudioGetSequences:
         self.sample_rate = sample_rate
         self.audio_processor = AudioPreprocessor(sample_rate=sample_rate)
 
+
     def time_to_seconds(self, t):
         # Aceita segundos (int/float) ou string HH:MM:SS
         if isinstance(t, (int, float)):
             return float(t)
         h, m, s = t.split(':')
         return int(h) * 3600 + int(m) * 60 + float(s)
+
 
     def has_overlap(self, start, end, intervals):
         # Retorna True se [start, end] sobrepõe algum intervalo da lista
@@ -34,11 +36,13 @@ class VideoAudioGetSequences:
                     and self.time_to_seconds(end) > self.time_to_seconds(h_start)):
                 return True
         return False
+    
 
     def save_audio_clip(self, audio, start, end, output_path):
         # Recorta e salva trecho de áudio em .wav
         clip = audio.subclipped(start, end)
         clip.write_audiofile(str(output_path), fps=self.sample_rate, logger=None)
+
 
     def save_video_clip(self, video, start, end, output_path, fps, grayscale=False, with_audio=False):
         # Recorta e salva clipe de vídeo; grayscale e áudio são opcionais
@@ -49,6 +53,7 @@ class VideoAudioGetSequences:
             ffmpeg_params=ffmpeg_params, logger=None, fps=fps
         )
 
+
     def save_mel_spectrogram(self, audio, start, end, output_path):
         # Extrai o trecho de áudio e salva o mel spectrograma em .npy
         clip = audio.subclipped(start, end)
@@ -58,6 +63,7 @@ class VideoAudioGetSequences:
         mel = self.audio_processor.extrair_mel_spectograma(audio_array)
         np.save(str(output_path), mel.astype(np.float32))
 
+
     def preprocess(
         self,
         vid_path,
@@ -66,7 +72,7 @@ class VideoAudioGetSequences:
         with_audio=False,
         grayscale=False,
         fps=None,
-        save_audio=False,
+        save_audio=False
     ):
         '''
         Processa um vídeo gerando clipes balanceados de highlight e no_highlight.
@@ -171,19 +177,74 @@ class VideoAudioGetSequences:
                 print(f"Apenas {count} segmentos negativos puderam ser gerados.")
 
 
+    def save_segments(
+        self,
+        vid_path,
+        intervals: list,
+        output_dir,
+        prefix="clip",
+        video_format='mp4',
+        with_audio=False,
+        grayscale=False,
+        fps=None,
+        save_audio=False
+    ):
+        '''
+        Salva clips de vídeo, áudio (opcional) e mel spectrograma a partir de intervalos definidos por pré definidos por VideoSlicer
+
+        Parâmetros:
+            vid_path      : caminho do vídeo de entrada.
+            intervals    : lista de tuplas (inicio, fim) em HH:MM:SS ou segundos.
+            video_format  : extensão do vídeo de saída (default: 'mp4').
+            with_audio    : salva o vídeo com áudio (default: False).
+            grayscale     : salva o vídeo em escala de cinza (default: False).
+            fps           : frames por segundo; se None, usa o fps original.
+            save_audio    : salva clipes de áudio em .wav (default: False).
+        '''
+        output_dir = Path(output_dir)
+
+        video_dir = output_dir / "video"
+        mel_dir = output_dir / "mel_spectograma"
+
+        os.makedirs(video_dir, exist_ok=True)
+        os.makedirs(mel_dir, exist_ok=True)
+
+        if save_audio:
+            audio_dir = output_dir / "audio"
+            os.makedirs(audio_dir, exist_ok=True)
+
+        if fps is None:
+            cap = cv2.VideoCapture(vid_path)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            cap.release()
+
+        with VideoFileClip(vid_path) as video:
+            audio = video.audio
+
+            for idx, (start, end) in enumerate(intervals):
+                start = self.time_to_seconds(start)
+                end = self.time_to_seconds(end)
+                
+                # vídeo
+                output_video = (video_dir /f"{prefix}_{idx}.{video_format}")
+                self.save_video_clip(video, start, end, output_video, fps=fps, grayscale=grayscale, with_audio=with_audio)
+                
+                # mel spectograma
+                output_mel = (mel_dir / f"{prefix}_{idx}.npy")
+                self.save_mel_spectrogram(audio, start, end, output_mel)
+
+                # audio (opcional)
+                if save_audio:
+                    output_audio = (audio_dir / f"{prefix}_{idx}.wav")
+
+                    self.save_audio_clip(audio, start, end, output_audio)
+
+
     def plot_mel_spectrogram(self, mel, title="Mel Spectrograma"):
         '''
         Plota um mel spectrograma salvo em memória.
-
-        Parameters
-        ----------
-        mel : np.ndarray
-            Matriz do mel spectrograma.
-        
-        title : str
-            Título do gráfico.
+        - mel (np.ndarray): Matriz do mel spectrograma.
         '''
-
         plt.figure(figsize=(10, 4))
         librosa.display.specshow(mel, sr=self.sample_rate, x_axis='time', y_axis='mel')
         plt.colorbar(format='%+2.0f dB')
@@ -191,12 +252,10 @@ class VideoAudioGetSequences:
         plt.tight_layout()
         plt.show()
 
-    def plot_saved_mel_spectrogram(self, mel_path):
-        '''
-        Carrega e plota um mel spectrograma salvo em .npy.
-        '''
-        mel = np.load(mel_path)
 
+    def plot_saved_mel_spectrogram(self, mel_path):
+        #Carrega e plota um mel spectrograma salvo em .npy.
+        mel = np.load(mel_path)
         self.plot_mel_spectrogram(mel, title=Path(mel_path).stem)
 
 
@@ -221,3 +280,25 @@ Dicas para reduzir custo computacional e uso de memória no preprocess:
     - sample_rate: um sample_rate menor (ex: 16000 vs 22050) reduz o
       tamanho dos arrays de áudio e o custo do cálculo do mel spectrograma.
 """
+
+
+# Example:
+'''
+from video_slicer import VideoSlicer
+
+vid_path = "/home/leticia/football/teste_video/teste_labeler.mp4"
+
+slicer = VideoSlicer(n_slices=10)
+slices_list = slicer.get_intervals(video_path=vid_path)
+
+
+processor = VideoAudioGetSequences(clip_size=10)
+
+processor.save_segments(
+    vid_path=vid_path,
+    intervals=slices_list,
+    output_dir='slices_highlight',
+    grayscale=True,
+    fps=15
+)
+'''
