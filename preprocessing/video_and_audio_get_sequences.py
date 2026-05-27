@@ -36,6 +36,15 @@ class VideoAudioGetSequences:
                     and self.time_to_seconds(end) > self.time_to_seconds(h_start)):
                 return True
         return False
+
+    def get_audio_array(self, audio, start, end):
+        clip = audio.subclipped(start, end)
+        audio_array = clip.to_soundarray(fps=self.sample_rate)
+
+        if len(audio_array.shape) > 1:
+            audio_array = np.mean(audio_array, axis=1)
+
+        return audio_array
     
 
     def save_audio_clip(self, audio, start, end, output_path):
@@ -54,14 +63,14 @@ class VideoAudioGetSequences:
         )
 
 
-    def save_mel_spectrogram(self, audio, start, end, output_path):
-        # Extrai o trecho de áudio e salva o mel spectrograma em .npy
-        clip = audio.subclipped(start, end)
-        audio_array = clip.to_soundarray(fps=self.sample_rate)
-        if len(audio_array.shape) > 1:
-            audio_array = np.mean(audio_array, axis=1)
+    def save_mel_spectrogram(self, audio_array, output_path):
         mel = self.audio_processor.extrair_mel_spectograma(audio_array)
         np.save(str(output_path), mel.astype(np.float32))
+
+
+    def is_silent(self, audio, threshold=1e-4):
+        rms = np.sqrt(np.mean(audio ** 2))
+        return rms < threshold
 
 
     def preprocess(
@@ -229,14 +238,18 @@ class VideoAudioGetSequences:
                 output_video = (video_dir /f"{prefix}_{idx}.{video_format}")
                 self.save_video_clip(video, start, end, output_video, fps=fps, grayscale=grayscale, with_audio=with_audio)
                 
+                audio_array = self.get_audio_array(audio, start, end)
+
+                if self.is_silent(audio_array):
+                    continue
+
                 # mel spectograma
                 output_mel = (mel_dir / f"{prefix}_{idx}.npy")
-                self.save_mel_spectrogram(audio, start, end, output_mel)
+                self.save_mel_spectrogram(audio_array, output_mel)
 
                 # audio (opcional)
                 if save_audio:
                     output_audio = (audio_dir / f"{prefix}_{idx}.wav")
-
                     self.save_audio_clip(audio, start, end, output_audio)
 
 
