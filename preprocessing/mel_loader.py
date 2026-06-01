@@ -27,7 +27,7 @@ class MelSpectogramDataset(Dataset):
     Parâmetros:
     - csv_path:
         CSV com pelo menos as colunas `mel_path` e `arousal_score`.
-    - label_col: str
+    - score_col: str
         Nome da coluna usada como rótulo (default: "arousal_score").
     - binary: bool
         Se True, converte o rótulo contínuo em 0/1 usando `threshold`.
@@ -72,25 +72,25 @@ class MelSpectogramDataset(Dataset):
         if self.transform is not None:
             mel_tensor = self.transform(mel_tensor)
 
-        # label
-        label_val = float(row[self.label_col])
-        if self.binary: 
-            label_val = float(label_val >= self.threshold) # classificação 0-1 para highlight
-        label = torch.tensor(label_val, dtype=self.dtype)
+        # score
+        score_val = float(row[self.score_col])
+        if self.binary_label: 
+            score_val = float(score_val >= self.threshold) # classificação 0-1 para highlight
+        score = torch.tensor(score_val, dtype=self.dtype)
 
-        return mel_tensor, label
+        return mel_tensor, score
     
     @property
-    def labels(self):
+    def score(self):
         # retorna um numpy array com os rótulos (0-1 ou aurosal)
-        vals = self.df[self.label_col].values.astype(float)
+        vals = self.df[self.score_col].values.astype(float)
         if self.binary:
             vals = (vals >= self.threshold).astype(float)
         return vals
     
 
     def __repr__(self):
-        return (f"MelSpectrogramDataset(n_samples={len(self)},\n label='{self.label_col}',\n binary={self.binary})")
+        return (f"MelSpectrogramDataset(n_samples={len(self)},\n score='{self.score_col}',\n binary_label={self.binary_label})")
 
 
 def build_mel_dataloader(csv_path, batch_size, shuffle: bool, num_workers: int, pin_memory=False,
@@ -99,7 +99,7 @@ def build_mel_dataloader(csv_path, batch_size, shuffle: bool, num_workers: int, 
     Cria Dataloader para treino/validação
 
     parâmetros extras em `dataset_kwargs` são repassados para
-    MelSpectrogramDataset (label_col, binary, threshold, transform,...
+    MelSpectrogramDataset (score_col, binary, threshold, transform,...
     '''
     dataset = MelSpectogramDataset(csv_path, **dataset_kwargs)
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=pin_memory)
