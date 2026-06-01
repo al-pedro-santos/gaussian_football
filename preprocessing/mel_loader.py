@@ -17,6 +17,22 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+
+
+def default_mel_transform(target_shape=None):
+    """
+    Transform padrão para mel spectrograma:
+    - redimensiona para target_shape = (n_mels, T)
+    - normaliza para [-1, 1]
+    """
+    ops = []
+
+    if target_shape is not None:
+        ops.append(transforms.Resize(target_shape))
+
+    ops.append(transforms.Normalize(mean=[0.5], std=[0.5]))
+    return transforms.Compose(ops)
 
 
 class MelSpectogramDataset(Dataset):
@@ -35,19 +51,23 @@ class MelSpectogramDataset(Dataset):
         Limiar para a conversão binária (default: 0.5).
     - transform:
         Transform aplicado ao tensor [1, n_mels, T].
+    - target_shape (n_mels, T): tupla [int, int] 
+        n_mels: número de bandas Mel (altura da "imagem")
+        T: número de frames temporais (largura da "imagem")
     """
     def __init__(self, 
                  csv_path,
                  score_col = "arousal_score",
                  binary_label = False,
                  threshold = 0.5,
+                 target_shape = (128, 256),
                  transform = None):
     
         self.df = pd.read_csv(csv_path)
         self.score_col = score_col
         self.binary_label = binary_label
         self.threshold = threshold
-        self.transform = transform
+        self.transform = transform or default_mel_transform(target_shape)
 
 
     def __len__(self):
@@ -84,7 +104,7 @@ class MelSpectogramDataset(Dataset):
     def score(self):
         # retorna um numpy array com os rótulos (0-1 ou aurosal)
         vals = self.df[self.score_col].values.astype(float)
-        if self.binary:
+        if self.binary_label:
             vals = (vals >= self.threshold).astype(float)
         return vals
     
@@ -103,4 +123,4 @@ def build_mel_dataloader(csv_path, batch_size, shuffle: bool, num_workers: int, 
     '''
     dataset = MelSpectogramDataset(csv_path, **dataset_kwargs)
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=pin_memory)
-
+    
