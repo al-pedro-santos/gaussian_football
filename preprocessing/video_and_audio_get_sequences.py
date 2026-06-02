@@ -9,9 +9,9 @@ import random
 import cv2
 import os
 
-
+from pathlib import Path
 class VideoAudioGetSequences:
-    '''
+    '''mean
     Gera clipes de vídeo, áudio e mel spectrogramas para segmentos
     highlight e no_highlight, produzindo um dataset balanceado.
     '''
@@ -140,18 +140,21 @@ class VideoAudioGetSequences:
         with VideoFileClip(vid_path) as video:
             audio    = video.audio
             duration = video.duration
+            has_audio = audio is not None # evitar erros
 
             # Salva clipes dos segmentos highlight
             for idx, (start, end) in enumerate(highlights):
                 output_path_video = highlight_video_dir / f"{video_name}_highlight_{idx}.{video_format}"
                 self.save_video_clip(video, start, end, output_path_video, fps=fps, grayscale=grayscale, with_audio=with_audio)
 
-                output_path_mel = highlight_mel_dir / f"{video_name}_highlight_{idx}.npy"
-                self.save_mel_spectrogram(audio, start, end, output_path_mel)
+                # Só processa áudio/mel se a trilha sonora existir no vídeo original
+                if has_audio:
+                    output_path_mel = highlight_mel_dir / f"{video_name}_highlight_{idx}.npy"
+                    self.save_mel_spectrogram(audio, start, end, output_path_mel)
 
-                if save_audio:
-                    output_path_audio = highlight_audio_dir / f"{video_name}_highlight_{idx}.wav"
-                    self.save_audio_clip(audio, start, end, output_path_audio)
+                    if save_audio:
+                        output_path_audio = highlight_audio_dir / f"{video_name}_highlight_{idx}.wav"
+                        self.save_audio_clip(audio, start, end, output_path_audio)
 
             # Gera segmentos no_highlight sem sobreposição, balanceando o dataset
             generated_intervals = []
@@ -176,10 +179,14 @@ class VideoAudioGetSequences:
                 output_path_mel = no_highlight_mel_dir / f"{video_name}_no_highlight_{count}.npy"
                 self.save_mel_spectrogram(audio, start, end, output_path_mel)
 
-                if save_audio:
-                    output_path_audio = no_highlight_audio_dir / f"{video_name}_no_highlight_{count}.wav"
-                    self.save_audio_clip(audio, start, end, output_path_audio)
+                # Proteção aplicada também na geração dos não-highlights
+                if has_audio:
+                    output_path_mel = no_highlight_mel_dir / f"{video_name}_no_highlight_{count}.npy"
+                    self.save_mel_spectrogram(audio, start, end, output_path_mel)
 
+                    if save_audio:
+                        output_path_audio = no_highlight_audio_dir / f"{video_name}_no_highlight_{count}.wav"
+                        self.save_audio_clip(audio, start, end, output_path_audio)
                 count += 1
 
             if count < qtd_negativos:
@@ -191,12 +198,14 @@ class VideoAudioGetSequences:
         vid_path,
         intervals: list,
         output_dir,
+        split: str, # train, val ou test
         prefix="clip",
         video_format='mp4',
         with_audio=False,
         grayscale=False,
         fps=None,
-        save_audio=False
+        save_audio=False,
+        half = None # se refere ao tempo 1 ou 2 do jogo
     ):
         '''
         Salva clips de vídeo, áudio (opcional) e mel spectrograma a partir de intervalos definidos por pré definidos por VideoSlicer
@@ -209,23 +218,48 @@ class VideoAudioGetSequences:
             grayscale     : salva o vídeo em escala de cinza (default: False).
             fps           : frames por segundo; se None, usa o fps original.
             save_audio    : salva clipes de áudio em .wav (default: False).
+
+            output dir : pasta que serão criadas as pastas de treino e teste
+            split: (train, val ou test) vai salvar na pasta do train, val ou test
+            half: (1 ou 2) passar para definir 1° ou 2° tempo da partida
         '''
         output_dir = Path(output_dir)
 
-        video_dir = output_dir / "video"
-        mel_dir = output_dir / "mel_spectograma"
+        # criando pastas para cada um dos conjuntos {train, val, test}:
+        train_dir = output_dir / 'train'
+        val_dir = output_dir / 'val'
+        test_dir = output_dir / 'test'
 
-        os.makedirs(video_dir, exist_ok=True)
-        os.makedirs(mel_dir, exist_ok=True)
+        os.makedirs(train_dir, exist_ok=True)
+        os.makedirs(val_dir, exist_ok=True)
+        os.makedirs(test_dir, exist_ok=True)
 
-        if save_audio:
-            audio_dir = output_dir / "audio"
-            os.makedirs(audio_dir, exist_ok=True)
-
+        # se o fps não foi passado, vai usar o do vídeo original
         if fps is None:
             cap = cv2.VideoCapture(vid_path)
             fps = cap.get(cv2.CAP_PROP_FPS)
             cap.release()
+
+        splits_path = {
+            'train': output_dir / 'train',
+            'val': output_dir / 'val',
+            'test': output_dir / 'test'
+        }
+
+        for sp in splits_path:
+            os.makedirs(sp, exist_ok=True)
+
+        if split in splits_path:
+            partida = os.path.basename(os.path.dirname(vid_path))
+            output_path = splits_path[split] / partida / str(half)
+            
+            # Criamos as pastas específicas desta partida dinamicamente aqui:
+            os.makedirs(output_path / "video", exist_ok=True)
+            os.makedirs(output_path / "mel_spectograma", exist_ok=True)
+            if save_audio:
+                os.makedirs(output_path / "audio", exist_ok=True)
+        else:
+            raise ValueError(f"Split '{split}' inválido. Escolha entre 'train', 'val' ou 'test'.")
 
         with VideoFileClip(vid_path) as video:
             audio = video.audio
@@ -235,21 +269,20 @@ class VideoAudioGetSequences:
                 end = self.time_to_seconds(end)
                 
                 # vídeo
-                output_video = (video_dir /f"{prefix}_{idx}.{video_format}")
+                output_video = (output_path / "video" /f"{prefix}_{idx}.{video_format}")
                 self.save_video_clip(video, start, end, output_video, fps=fps, grayscale=grayscale, with_audio=with_audio)
                 
                 audio_array = self.get_audio_array(audio, start, end)
 
-                if self.is_silent(audio_array):
+                if self.is_silent(audio_array): # não vai processar e salvar mel spectograma e audio
                     continue
 
                 # mel spectograma
-                output_mel = (mel_dir / f"{prefix}_{idx}.npy")
+                output_mel = (output_path / "mel_spectograma" / f"{prefix}_{idx}.npy")
                 self.save_mel_spectrogram(audio_array, output_mel)
-
                 # audio (opcional)
                 if save_audio:
-                    output_audio = (audio_dir / f"{prefix}_{idx}.wav")
+                    output_audio = (output_path / "audio" / f"{prefix}_{idx}.wav")
                     self.save_audio_clip(audio, start, end, output_audio)
 
 
@@ -295,23 +328,51 @@ Dicas para reduzir custo computacional e uso de memória no preprocess:
 """
 
 
-# Example:
-'''
+# ==============================================================================
+# Execução: Processando ambos os tempos (Half 1 e Half 2)
+# ==============================================================================
 from video_slicer import VideoSlicer
 
-vid_path = "/home/leticia/football/teste_video/teste_labeler.mp4"
+# Caminho base para a pasta do jogo
+game_dir = "/home/al.leticia.ferreira/gaussian_football/data/raw/2015-02-21_-_18-00_Crystal_Palace_1_-_2_Arsenal"
+title_dir = 'val'
 
-slicer = VideoSlicer(n_slices=10)
-slices_list = slicer.get_intervals(video_path=vid_path)
+# Loop para processar o tempo 1 e o tempo 2
+for half in [1, 2]:
+    vid_path = os.path.join(game_dir, f"{half}_224p.mkv")
+    
+    # Verifica se o arquivo de vídeo realmente existe antes de iniciar
+    if not os.path.exists(vid_path):
+        print(f"\n[AVISO] Arquivo não encontrado: {vid_path}. Pulando para o próximo.")
+        continue
+        
+    print(f"\n" + "="*50)
+    print(f"Iniciando processamento: TEMPO {half}")
+    print(f"="*50)
 
+    # Configura o fatiador
+    slicer = VideoSlicer(n_slices=90)
+    slices_list = slicer.get_intervals(video_path=vid_path)
 
-processor = VideoAudioGetSequences(clip_size=10)
+    processor = VideoAudioGetSequences(clip_size=10)
+    output_dir = 'data/processed' 
 
-processor.save_segments(
-    vid_path=vid_path,
-    intervals=slices_list,
-    output_dir='slices_highlight',
-    grayscale=True,
-    fps=15
-)
+    processor.save_segments(
+        vid_path=vid_path,
+        intervals=slices_list,
+        output_dir=output_dir,
+        split = title_dir,
+        grayscale=True,
+        half=half,
+        fps=15
+    )
+
 '''
+Resultado desse teste:
+data/processed
+    - nome da partida
+        - pastas para half 1 ou 2
+            - train, val e test
+                - mel_spectograma e video
+'''
+print("\n[SUCESSO] Processamento concluído para ambas as partes!")
