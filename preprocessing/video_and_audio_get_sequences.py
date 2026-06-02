@@ -251,7 +251,7 @@ class VideoAudioGetSequences:
 
         if split in splits_path:
             partida = os.path.basename(os.path.dirname(vid_path))
-            output_path = splits_path[split] / partida / str(half)
+            output_path = splits_path[split] / partida / f"half_{half}"
             
             # Criamos as pastas específicas desta partida dinamicamente aqui:
             os.makedirs(output_path / "video", exist_ok=True)
