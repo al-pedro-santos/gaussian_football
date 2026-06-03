@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-
+from moviepy.video.io.VideoFileClip import VideoFileClip
 
 class VideoScorerPreprocessor:
     """
@@ -29,20 +29,21 @@ class VideoScorerPreprocessor:
         Threshold mínimo para considerar um frame como highlight.
     """
 
-    def __init__(self, video_path, highlights, threshold=0.5):
+    def __init__(self, video_path, highlights, fps=None, threshold=0.5):
         self.video_path = video_path
-        self.highlights = highlights # lista de highlights
+        self.highlights = highlights
 
-        cap = cv2.VideoCapture(video_path)
+        with VideoFileClip(video_path) as video:
+            duration = video.duration
 
-        self.frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if fps is None:
+                self.fps = video.fps
+            else:
+                self.fps = fps
 
-        self.fps = cap.get(cv2.CAP_PROP_FPS)
+            self.frame_count = int(duration * self.fps)
 
-        cap.release()
-
-        self.timeline = np.zeros(self.frame_count) # timeline
-
+        self.timeline = np.zeros(self.frame_count)
         self.threshold = threshold
 
         self.gaussian_timeline = self.gaussian_timeline() # construindo a timeline de gaussianas
@@ -63,6 +64,10 @@ class VideoScorerPreprocessor:
         return np.exp(-((x - mu) ** 2) / (2 * sigma ** 2))
 
     def gaussian_timeline(self):
+        print("frame_count =", self.frame_count)
+        print("fps =", self.fps)
+        print("duration =", self.frame_count / self.fps)
+
         x = np.arange(self.frame_count)
 
         for start, end in self.highlights:
@@ -94,8 +99,9 @@ class VideoScorerPreprocessor:
         plt.ylim(0, 1.05)
         plt.show()
 
-# exemplo:
+"""
 vid_path = '/home/leticia/football/teste_labeler.mp4'
 highlights = [('00:00:15', '00:00:30'), ('00:00:33', '00:00:45'), ('00:02:20', '00:02:40')]
 scorer = VideoScorerPreprocessor(video_path=vid_path, highlights=highlights, threshold=0.5)
 scorer.plot()
+"""

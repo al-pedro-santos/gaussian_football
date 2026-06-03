@@ -327,14 +327,14 @@ Dicas para reduzir custo computacional e uso de memória no preprocess:
       tamanho dos arrays de áudio e o custo do cálculo do mel spectrograma.
 """
 
-
+"""
 # ==============================================================================
 # Execução: Processando ambos os tempos (Half 1 e Half 2)
 # ==============================================================================
 from video_slicer import VideoSlicer
 
 # Caminho base para a pasta do jogo
-game_dir = "/home/al.leticia.ferreira/gaussian_football/data/raw/2015-02-21_-_18-00_Crystal_Palace_1_-_2_Arsenal"
+game_dir = "/home/leticia/football/gaussian_football/data/raw/2015-02-21_-_18-00_Crystal_Palace_1_-_2_Arsenal"
 title_dir = 'val'
 
 # Loop para processar o tempo 1 e o tempo 2
@@ -351,7 +351,7 @@ for half in [1, 2]:
     print(f"="*50)
 
     # Configura o fatiador
-    slicer = VideoSlicer(n_slices=90)
+    slicer = VideoSlicer(n_slices=20)
     slices_list = slicer.get_intervals(video_path=vid_path)
 
     processor = VideoAudioGetSequences(clip_size=10)
@@ -366,7 +366,7 @@ for half in [1, 2]:
         half=half,
         fps=15
     )
-
+"""
 '''
 Resultado desse teste:
 data/processed
