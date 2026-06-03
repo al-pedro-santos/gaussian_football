@@ -35,7 +35,7 @@ def default_mel_transform(target_shape=None):
     return transforms.Compose(ops)
 
 
-class MelSpectogramDataset(Dataset):
+class MelSpectrogramDataset(Dataset):
     """
     Dataset para mel spectrogramas gerados por AudioPreprocessor ou
     VideoAudioGetSequences.
@@ -45,7 +45,7 @@ class MelSpectogramDataset(Dataset):
         CSV com pelo menos as colunas `mel_path` e `arousal_score`.
     - score_col: str
         Nome da coluna usada como rótulo (default: "arousal_score").
-    - binary: bool
+    - binary_label: bool
         Se True, converte o rótulo contínuo em 0/1 usando `threshold`.
     - threshold: float
         Limiar para a conversão binária (default: 0.5).
@@ -61,13 +61,22 @@ class MelSpectogramDataset(Dataset):
                  binary_label = False,
                  threshold = 0.5,
                  target_shape = (128, 256),
-                 transform = None):
+                 transform = None,
+                 dtype = torch.float32):
     
         self.df = pd.read_csv(csv_path)
+        n_before = len(self.df)
+
+        self.df = self.df[self.df["mel_path"].notna()].copy() # desconsiderando audios silenciosos
+        self.df = self.df[self.df["mel_path"].apply(lambda p: Path(p).exists())].reset_index(drop=True)
+
+        print(f"Dataset: {len(self.df)}/{n_before} exemplos válidos.") # print diagnóstico
+
         self.score_col = score_col
         self.binary_label = binary_label
         self.threshold = threshold
         self.transform = transform or default_mel_transform(target_shape)
+        self.dtype = dtype
 
 
     def __len__(self):
@@ -119,8 +128,8 @@ def build_mel_dataloader(csv_path, batch_size, shuffle: bool, num_workers: int, 
     Cria Dataloader para treino/validação
 
     parâmetros extras em `dataset_kwargs` são repassados para
-    MelSpectrogramDataset (score_col, binary, threshold, transform,...
+    MelSpectrogramDataset (score_col, binary_label, threshold, transform,...
     '''
-    dataset = MelSpectogramDataset(csv_path, **dataset_kwargs)
+    dataset = MelSpectrogramDataset(csv_path, **dataset_kwargs)
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=pin_memory)
-    
+

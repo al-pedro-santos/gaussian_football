@@ -64,10 +64,6 @@ class VideoScorerPreprocessor:
         return np.exp(-((x - mu) ** 2) / (2 * sigma ** 2))
 
     def gaussian_timeline(self):
-        print("frame_count =", self.frame_count)
-        print("fps =", self.fps)
-        print("duration =", self.frame_count / self.fps)
-
         x = np.arange(self.frame_count)
 
         for start, end in self.highlights:
