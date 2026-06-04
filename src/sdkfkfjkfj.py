@@ -30,6 +30,12 @@ def extract_goals(labels_path):
 
     return goals
 
+'''
+def goals_to_intervals(goals, window_before=15, window_after=15):
+    # expande cada gol pontual para um intervalo (half, start, end)
+    return [(half, max(0, seconds - window_before), seconds + window_after) for (half, seconds) in goals]
+'''
+
 def goals_to_intervals(goals, duration, current_half, window_before=15, window_after=15):
     intervals = []
 
@@ -74,6 +80,7 @@ def build_labels(game_dir, clips_dir, intervals_per_half, window_before=15, wind
         # cria intervalos usando a duração desse half
         with VideoFileClip(video_path) as video:
             duration = math.floor(video.duration)
+            print('duração calculada no build', duration)
 
         intervals = goals_to_intervals(goals, duration, half, window_before=window_before, window_after=window_after) # constrói os intervalos
 
@@ -87,6 +94,7 @@ def build_labels(game_dir, clips_dir, intervals_per_half, window_before=15, wind
             os.listdir(video_dir),
             key=lambda x: int(x.split("_")[1].split(".")[0])
         )
+        print(clip_files)
 
         for idx, (start, end) in enumerate(tqdm(intervals_per_half[half], desc=f"Half {half}")):
             clip_file = clip_files[idx]
