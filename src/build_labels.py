@@ -2,21 +2,29 @@ import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "preprocessing"))
 
+import csv
 import math
 import json
 import argparse
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-from preprocessing.video_scorer import VideoScorerPreprocessor
-from preprocessing.video_slicer import VideoSlicer
+from video_scorer import VideoScorerPreprocessor
+from video_slicer import VideoSlicer
+from video_and_audio_get_sequences import VideoAudioGetSequences
 from moviepy.video.io.VideoFileClip import VideoFileClip
+
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_PROCESSED_DIR = os.path.join(_PROJECT_ROOT, "data", "processed")
+
 
 def parse_game_time(game_time):
     # converte "half - mm:ss" para (half, segundos)
     half, brute_time = game_time.split(" - ")
     min, sec = brute_time.split(":")
     return int(half), int(min) * 60 + int(sec)
+
 
 def extract_goals(labels_path):
     # extrai os timestamps dos gols do Labels-v2.json
@@ -30,7 +38,19 @@ def extract_goals(labels_path):
 
     return goals
 
+
+def load_games_index(index_path):
+    # carrega um csv de índice de jogos e devolve apenas as linhas marcadas como válidas.
+    with open(index_path, newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        return [
+            row for row in reader 
+            if row["valid"] == "True"
+            ]
+
+
 def goals_to_intervals(goals, duration, current_half, window_before=15, window_after=15):
+    # gera pequenos intervalos de tempo em torno de cada gol no tempo determinado, respeitando os limites do tempo total da metade.
     intervals = []
 
     for half, seconds in goals:
@@ -42,6 +62,7 @@ def goals_to_intervals(goals, duration, current_half, window_before=15, window_a
 
         intervals.append((half, start, end))
     return intervals
+
 
 def build_arousal_timeline(video_path, intervals, half, fps):
     with VideoFileClip(video_path) as video:
@@ -61,6 +82,34 @@ def build_arousal_timeline(video_path, intervals, half, fps):
 
     scorer = VideoScorerPreprocessor(video_path, half_intervals, fps=fps)
     return scorer.gaussian_timeline
+
+
+def generate_clips(game_dir, clips_dir, intervals_per_half, fps=25, grayscale=True):
+    processor = VideoAudioGetSequences()
+
+    for half in [1, 2]:
+        video_path = os.path.join(game_dir, f"{half}_224p.mkv")
+
+        if not os.path.exists(video_path):
+            print(f"Vídeo não encontrado: {video_path}, pulando...")
+            continue
+
+        output_dir = os.path.join(clips_dir, f"half_{half}")
+        os.makedirs(os.path.join(output_dir, "video"), exist_ok=True)
+        os.makedirs(os.path.join(output_dir, "mel_spectograma"), exist_ok=True)
+
+        with VideoFileClip(video_path) as video:
+            audio = video.audio
+
+            for idx, (start, end) in enumerate(tqdm(intervals_per_half[half], desc=f"Gerando clips Half {half}")):
+                output_video = os.path.join(output_dir, "video", f"clip_{idx}.mp4")
+                processor.save_video_clip(video, start, end, output_video, fps=fps, grayscale=grayscale)
+
+                if audio is not None:
+                    audio_array = processor.get_audio_array(audio, start, end)
+                    if not processor.is_silent(audio_array):
+                        output_mel = os.path.join(output_dir, "mel_spectograma", f"clip_{idx}.npy")
+                        processor.save_mel_spectrogram(audio_array, output_mel)
 
 
 def build_labels(game_dir, clips_dir, intervals_per_half, window_before=15, window_after=15, fps=25):
@@ -112,33 +161,63 @@ def build_labels(game_dir, clips_dir, intervals_per_half, window_before=15, wind
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--game_dir",       required=True)
-    parser.add_argument("--clips_dir",      required=True)
+    parser.add_argument("--index_path",     default="data/labels/games_index.csv")
+    parser.add_argument("--processed_dir",  default=DEFAULT_PROCESSED_DIR)
     parser.add_argument("--fps",            type=int, default=25)
     parser.add_argument("--n_slices",       type=int, default=330)
-    parser.add_argument("--window_before",  type=int, default=15)  
-    parser.add_argument("--window_after",   type=int, default=15)  
-    parser.add_argument("--output",         default="labels.csv")
+    parser.add_argument("--window_before",  type=int, default=15)
+    parser.add_argument("--window_after",   type=int, default=15)
+    parser.add_argument("--output",         default="data/labels/labels_all.csv")
     args = parser.parse_args()
 
     slicer = VideoSlicer(n_slices=args.n_slices)
-    intervals_per_half = {}
-    for half in [1, 2]:
-        video_path = os.path.join(args.game_dir, f"{half}_224p.mkv")
-        intervals_per_half[half] = slicer.get_intervals(video_path)
+    games = load_games_index(args.index_path)
 
-    rows = build_labels(
-        args.game_dir,
-        args.clips_dir,
-        intervals_per_half,
-        window_before=args.window_before,
-        window_after=args.window_after,
-        fps=args.fps,
-    )
+    all_rows = []
+    for game in games:
+        game_dir  = os.path.dirname(game["1_224p.mkv"])
+        clips_dir = os.path.join(args.processed_dir, game["league"], game["season"], os.path.basename(game_dir))
 
-    df = pd.DataFrame(rows)
-    df.to_csv(args.output, index=False)
-    print(f"Salvo em {args.output} ({len(df)} clips)")
+        intervals_per_half = {}
+        for half in [1, 2]:
+            video_path = os.path.join(game_dir, f"{half}_224p.mkv")
+            intervals_per_half[half] = slicer.get_intervals(video_path)
+
+        print(f"\nProcessando: {game['game_id']}")
+
+        video_dir_half1 = os.path.join(clips_dir, "half_1", "video")
+        clips_existem = os.path.isdir(video_dir_half1) and len(os.listdir(video_dir_half1)) > 0
+
+        if clips_existem:
+            print(f"Clips já existem para {game['game_id']}, pulando geração...")
+        else:
+            generate_clips(game_dir, clips_dir, intervals_per_half, fps=args.fps)
+
+        if os.path.exists(args.output):
+            df_existing = pd.read_csv(args.output)
+            if game["game_id"] in df_existing["game_id"].values:
+                print(f"Labels já existem para {game['game_id']}, pulando...")
+                all_rows.extend(df_existing[df_existing["game_id"] == game["game_id"]].to_dict("records"))
+                continue
+
+        rows = build_labels(
+            game_dir, clips_dir, intervals_per_half,
+            window_before=args.window_before,
+            window_after=args.window_after,
+            fps=args.fps,
+        )
+
+        for row in rows:
+            row["game_id"] = game["game_id"]
+            row["season"]  = game["season"]
+            row["split"]   = game["split"]
+
+        all_rows.extend(rows)
+
+        df = pd.DataFrame(all_rows)
+        os.makedirs(os.path.dirname(args.output), exist_ok=True)
+        df.to_csv(args.output, index=False)
+        print(f"Salvo: {game['game_id']} - total acumulado: {len(df)} clips")
 
 if __name__ == "__main__":
     main()
