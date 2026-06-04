@@ -179,9 +179,13 @@ def main():
         clips_dir = os.path.join(args.processed_dir, game["league"], game["season"], os.path.basename(game_dir))
 
         intervals_per_half = {}
-        for half in [1, 2]:
-            video_path = os.path.join(game_dir, f"{half}_224p.mkv")
-            intervals_per_half[half] = slicer.get_intervals(video_path)
+        try:
+            for half in [1, 2]:
+                video_path = os.path.join(game_dir, f"{half}_224p.mkv")
+                intervals_per_half[half] = slicer.get_intervals(video_path)
+        except OSError as e:
+            print(f"Erro ao ler vídeo de {game['game_id']}, pulando: {e}")
+            continue
 
         print(f"\nProcessando: {game['game_id']}")
 
