@@ -115,7 +115,7 @@ def main():
     parser.add_argument("--game_dir",       required=True)
     parser.add_argument("--clips_dir",      required=True)
     parser.add_argument("--fps",            type=int, default=25)
-    parser.add_argument("--n_slices",       type=int, default=90)
+    parser.add_argument("--n_slices",       type=int, default=330)
     parser.add_argument("--window_before",  type=int, default=15)  
     parser.add_argument("--window_after",   type=int, default=15)  
     parser.add_argument("--output",         default="labels.csv")
