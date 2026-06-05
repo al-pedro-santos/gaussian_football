@@ -2,7 +2,8 @@
 .env
 
 # dados brutos e processados
-data/
+data/processed/
+data/raw/
 
 # arquivos de trabalho em progresso
 wip/
