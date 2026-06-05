@@ -120,7 +120,7 @@ def generate_clips(game_dir, clips_dir, intervals_per_half, fps=25, grayscale=Tr
                             processor.save_mel_spectrogram(audio_array, output_mel)
                 except Exception as e:
                     print(
-                        f"\n  ✗ Erro no clip {idx} ({start:.1f}s-{end:.1f}s): {e}, pulando..."
+                        f"\n  Erro no clip {idx} ({start:.1f}s-{end:.1f}s): {e}, pulando..."
                     )
                     continue
 
@@ -225,7 +225,7 @@ def main():
                 video_path = os.path.join(game_dir, f"{half}_224p.mkv")
                 intervals_per_half[half] = slicer.get_intervals(video_path)
         except OSError as e:
-            print(f"  ✗ Erro ao ler vídeo, pulando: {e}")
+            print(f" Erro ao ler vídeo, pulando: {e}")
             games_pulados += 1
             continue
 
@@ -235,15 +235,15 @@ def main():
         )
 
         if clips_existem:
-            print(f"  ✓ Clips já existem, pulando geração...")
+            print(f" Clips já existem, pulando geração...")
         else:
-            print(f"  → Gerando clips...")
+            print(f" Vai gerar clips agora para {game['game_id']}")
             generate_clips(game_dir, clips_dir, intervals_per_half, fps=args.fps)
 
         if os.path.exists(args.output):
             df_existing = pd.read_csv(args.output)
             if game["game_id"] in df_existing["game_id"].values:
-                print(f"  ✓ Labels já existem, pulando...")
+                print(f" Labels já existem, pulando...")
                 all_rows.extend(
                     df_existing[df_existing["game_id"] == game["game_id"]].to_dict(
                         "records"
