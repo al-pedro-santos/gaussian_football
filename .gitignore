@@ -19,6 +19,15 @@ dist/
 build/
 .eggs/
 
+# latex
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+
 # ambientes virtuais
 .venv/
 .env/

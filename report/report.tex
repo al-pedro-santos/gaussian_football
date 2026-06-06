@@ -10,8 +10,8 @@
 \usepackage{parskip}
 \usepackage{titlesec}
 \usepackage{booktabs}
-\usepackage{libertinus}
-\usepackage{sfmath}
+\usepackage{dirtree}
+\usepackage{helvet}
 \renewcommand{\familydefault}{\sfdefault}
 
 \geometry{margin=2.5cm}
@@ -84,6 +84,68 @@ Ao fatiar a partida em clipes, cada clipe contém múltiplos frames, cada um com
 
 A escolha de \texttt{np.max} ao invés de \texttt{np.mean} é empírica. Considere um clipe de 5 segundos a 2\,fps: esse clipe contém 10 frames. Se apenas 2 desses frames estão próximos do pico da gaussiana, a média dilui o sinal pelos 8 frames restantes, cujo score é próximo de zero. O máximo preserva o sinal mais forte do clipe, indicando que aquele clipe contém um momento de alta intensidade, independentemente de quantos frames não emocionantes coexistem nele.
 
+\newpage
+
+\section{Estrutura do Projeto}
+
+O projeto está organizado em cinco diretórios principais:
+
+\begin{itemize}
+    \item \texttt{data/} — centraliza todos os dados do pipeline:
+    \begin{itemize}
+        \item \texttt{raw/} — arquivos brutos baixados do SoccerNet;
+        \item \texttt{processed/} — clipes fatiados e mel espectrogramas, espelhando a estrutura de \texttt{raw/} no formato \texttt{liga/temporada/partida/tempo/};
+        \item \texttt{labels/} — CSVs de índice e labels gerados pelos scripts de \texttt{src/}.
+    \end{itemize}
+    \item \texttt{models/nn/} — arquiteturas de redes neurais implementadas;
+    \item \texttt{preprocessing/} — utilitários de baixo nível para fatiamento de vídeo, extração de features e geração de mel espectrogramas;
+    \item \texttt{src/} — scripts principais do pipeline: download, indexação e geração de labels;
+    \item \texttt{outputs/} — reservado para resultados do modelo após o treinamento.
+\end{itemize}
+
+\newpage
+
+\subsection{Árvore de Diretórios}
+
+\bigskip
+
+\dirtree{%
+.1 gaussian\_football/.
+.2 data/.
+.3 labels/.
+.4 games\_index.csv.
+.4 labels\_all.csv.
+.3 processed/.
+.3 raw/.
+.2 models/.
+.3 nn/.
+.4 bidirectional\_lstm.py.
+.4 cnnbilstm.py.
+.4 vgg\_16\_lstm.py.
+.2 outputs/.
+.2 preprocessing/.
+.3 audio\_mel\_spectogram.py.
+.3 datasets\_mel\_video.py.
+.3 image\_resize.py.
+.3 image\_to\_array.py.
+.3 loaders.py.
+.3 mel\_loader.py.
+.3 vgg16\_feature\_extract.py.
+.3 video\_and\_audio\_get\_sequences.py.
+.3 video\_color.py.
+.3 video\_get\_sequence.py.
+.3 video\_scorer.py.
+.3 video\_slicer.py.
+.2 src/.
+.3 build\_index.py.
+.3 build\_labels.py.
+.3 download\_games.py.
+.3 treinamento.ipynb.
+.2 README.md.
+.2 requirements.txt.
+}
+
+\newpage
 \section{Pipeline de Preparação de Dados}
 
 \subsection{Dataset e Configuração}
