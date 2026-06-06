@@ -14,25 +14,43 @@ import argparse
 from SoccerNet.Downloader import SoccerNetDownloader
 from SoccerNet.utils import getListGames
 
-
 # CONSTANTES
 
 DEFAULT_FILES = ["1_224p.mkv", "2_224p.mkv", "Labels-v2.json"]
 VALID_SPLITS = ["train", "valid", "test", "challenge"]
+
+# Mapeia os códigos de liga usados neste projeto para os prefixos
+# de diretório do SoccerNet. Os prefixos seguem a convenção interna
+# do dataset: {país}_{liga}.
 LEAGUE_PREFIXES = {
-    "epl":        "england_epl",
+    "epl": "england_epl",
     "bundesliga": "germany_bundesliga",
-    "ligue-1":    "france_ligue-1",
-    "ucl":        "europe_uefa-champions-league",
-    "serie-a":    "italy_serie-a",
-    "laliga":     "spain_laliga",
+    "ligue-1": "france_ligue-1",
+    "ucl": "europe_uefa-champions-league",
+    "serie-a": "italy_serie-a",
+    "laliga": "spain_laliga",
 }
+
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_LOCAL_DIR = os.path.join(_PROJECT_ROOT, "data", "raw")
 
 # LIDANDO COM SPLITS
 
+
 def normalize_splits(splits):
+    """
+    Normaliza a entrada de splits para uma lista válida.
+
+    Args:
+        splits (str | list): Split(s) desejados. Aceita 'v1', 'all',
+            splits explícitos ou listas combinando esses valores.
+
+    Returns:
+        list[str]: Lista de splits válidos sem duplicatas.
+
+    Raises:
+        ValueError: Se algum split não for reconhecido.
+    """
     # garante que splits seja sempre uma lista
     if not isinstance(splits, list):
         splits = [splits]
@@ -61,16 +79,30 @@ def normalize_splits(splits):
 
 # LISTAGEM DOS JOGOS
 
+
 def get_games(league, splits):
-    """
-    Retorna uma lista de tuplas (split, game_path) para as ligas e splits dados,
-    onde game_path o path relativo do próprio SoccerNet, por exemplo:
-        'england_epl/2016-2017/"2016-12-04 - 16-30 Bournemouth 4 - 3 Liverpool'
+    """Retorna a lista de jogos disponíveis para uma liga e splits dados.
+
+    Args:
+        league (str): Código da liga. Deve ser uma chave válida de
+            LEAGUE_PREFIXES (ex: 'epl', 'bundesliga').
+        splits (str | list): Split(s) desejados. Aceita 'v1', 'all',
+            splits explícitos ou listas combinando esses valores.
+
+    Returns:
+        list[tuple[str, str]]: Lista de tuplas (split, game_path), onde
+            game_path é o caminho relativo do jogo no formato SoccerNet
+            (ex: 'england_epl/2016-2017/2016-12-04 - ...').
+
+    Raises:
+        ValueError: Se a liga não for reconhecida.
     """
     splits = normalize_splits(splits)
     prefix = LEAGUE_PREFIXES.get(league)
     if prefix is None:
-        raise ValueError(f"Liga desconhecida: '{league}'. Opções: {list(LEAGUE_PREFIXES.keys())}")
+        raise ValueError(
+            f"Liga desconhecida: '{league}'. Opções: {list(LEAGUE_PREFIXES.keys())}"
+        )
 
     games = []
     for split in splits:
@@ -82,7 +114,16 @@ def get_games(league, splits):
 
 
 def count_games(league, splits):
-    """Mostra um resumo dos jogos disponíveis por split e retorna a lista."""
+    """Exibe um resumo dos jogos disponíveis por split e retorna a lista.
+
+    Args:
+        league (str): Código da liga.
+        splits (str | list): Split(s) desejados.
+
+    Returns:
+        list[tuple[str, str]]: Lista de tuplas (split, game_path),
+            igual ao retorno de get_games.
+    """
     games = get_games(league, splits)
 
     split_counts = {}
@@ -99,8 +140,18 @@ def count_games(league, splits):
 
 # CHECAGEM DE EXISTÊNCIA
 
+
 def game_already_downloaded(local_dir, game_path, files):
-    """Retorna True somente se todos os arquivos esperados para esse jogo já existem presentes na memória."""
+    """Verifica se todos os arquivos esperados de um jogo já existem no disco.
+
+    Args:
+        local_dir (str): Diretório raiz onde os jogos são armazenados.
+        game_path (str): Caminho relativo do jogo no formato SoccerNet.
+        files (list[str]): Lista de nomes de arquivos esperados.
+
+    Returns:
+        bool: True se todos os arquivos existem, False caso contrário.
+    """
     game_dir = os.path.join(local_dir, game_path)
     for f in files:
         if not os.path.isfile(os.path.join(game_dir, f)):
@@ -110,11 +161,24 @@ def game_already_downloaded(local_dir, game_path, files):
 
 # DOWNLOADER
 
+
 def download_games(league, local_dir, password, splits, files, dry_run=False):
-    """
-    Baixa jogos para a dada liga e splits em local_dir.
-    Pula jogos em que todos os arquivos esperados já existem.
-    Se dry_run=True, lista o que seria baixado sem efetivamente baixar ainda.
+    """Baixa os arquivos das partidas para a liga e splits especificados.
+
+    Jogos cujos arquivos já existem no disco são pulados automaticamente.
+    Se dry_run=True, lista o que seria baixado sem efetuar nenhum download.
+
+    Args:
+        league (str): Código da liga.
+        local_dir (str): Diretório raiz onde os arquivos serão salvos.
+        password (str | None): Senha SoccerNet para arquivos protegidos.
+        splits (str | list): Split(s) desejados.
+        files (list[str]): Lista de arquivos a baixar por jogo.
+        dry_run (bool): Se True, apenas lista as ações sem executá-las.
+            Default: False.
+
+    Raises:
+        RuntimeError: Se nenhum jogo for encontrado para a liga e splits dados.
     """
     games = get_games(league, splits)
     if not games:
@@ -123,13 +187,17 @@ def download_games(league, local_dir, password, splits, files, dry_run=False):
         )
 
     active_splits = sorted(set(s for s, _ in games))
-    print(f"{'[DRY RUN] ' if dry_run else ''}Processando {len(games)} jogos "
-          f"{league.upper()} | splits: {', '.join(active_splits)}")
+    print(
+        f"{'[DRY RUN] ' if dry_run else ''}Processando {len(games)} jogos "
+        f"{league.upper()} | splits: {', '.join(active_splits)}"
+    )
     print(f"Arquivos alvo: {files}\n")
 
     if dry_run:
         for split, game in games:
-            status = "ok" if game_already_downloaded(local_dir, game, files) else "baixar"
+            status = (
+                "ok" if game_already_downloaded(local_dir, game, files) else "baixar"
+            )
             print(f"  [{status:6s}] {split}: {game}")
         return
 
@@ -158,6 +226,7 @@ def download_games(league, local_dir, password, splits, files, dry_run=False):
 
 # RODAR NO TERMINAL
 
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Baixa jogos do SoccerNet para uma liga específica.",
@@ -165,31 +234,41 @@ def parse_args():
         epilog=__doc__,
     )
     parser.add_argument(
-        "--league", choices=list(LEAGUE_PREFIXES.keys()), default="epl",
+        "--league",
+        choices=list(LEAGUE_PREFIXES.keys()),
+        default="epl",
         help="Liga a ser baixada (default: epl)",
     )
     parser.add_argument(
-        "--splits", nargs="+", default=["v1"],
+        "--splits",
+        nargs="+",
+        default=["v1"],
         help="Splits a serem baixados: train valid test challenge v1 all (default: v1)",
     )
     parser.add_argument(
-        "--local_dir", default=DEFAULT_LOCAL_DIR,
+        "--local_dir",
+        default=DEFAULT_LOCAL_DIR,
         help="Diretório raiz onde os jogos serão salvos (default: data/raw)",
     )
     parser.add_argument(
-        "--password", default=None,
+        "--password",
+        default=None,
         help="Senha SoccerNet (necessária para vídeos)",
     )
     parser.add_argument(
-        "--files", nargs="+", default=DEFAULT_FILES,
+        "--files",
+        nargs="+",
+        default=DEFAULT_FILES,
         help=f"Arquivos a baixar por jogo (default: {DEFAULT_FILES})",
     )
     parser.add_argument(
-        "--dry_run", action="store_true",
+        "--dry_run",
+        action="store_true",
         help="Lista os jogos que seriam baixados sem baixar nada",
     )
     parser.add_argument(
-        "--count_only", action="store_true",
+        "--count_only",
+        action="store_true",
         help="Apenas conta os jogos disponíveis e sai",
     )
     return parser.parse_args()

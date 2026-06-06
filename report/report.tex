@@ -1,0 +1,145 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[portuguese]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{booktabs}
+\usepackage{libertinus}
+\usepackage{sfmath}
+\renewcommand{\familydefault}{\sfdefault}
+
+\geometry{margin=2.5cm}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue
+}
+
+\title{
+    \vspace{-2cm}
+    \Large \textbf{IMPA Tech} \\[0.5cm]
+    \large Machine Learning 2 \\
+    \small Prof. Francisco Ganacim \quad Prof. Daniel Yukimura \\[1.5cm]
+    \rule{\linewidth}{0.5pt} \\[0.4cm]
+    {\Huge \textbf{Gaussian Football n-D}} \\[0.2cm]
+    \large Documentação Técnica \\
+    \rule{\linewidth}{0.5pt} \\[1.5cm]
+    \normalsize
+    \begin{tabular}{c}
+        Gabriel Ferreira Silva \\[0.3cm]
+        Letícia Aleixo Ferreira \\[0.3cm]
+        Pedro Miguel Rocha Santos
+    \end{tabular}
+}
+\date{\vspace{1cm} Rio de Janeiro, \today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+\newpage
+
+\tableofcontents
+\newpage
+
+
+% ============================================================
+\section{Visão Geral do Projeto}
+% ============================================================
+
+O sistema automatiza a geração de \textit{highlights} (a princípio, gols) de uma partida de futebol, utilizando tanto imagens quanto áudio (na forma de mel espectrogramas) extraídos de uma transmissão televisiva.
+
+O problema é formulado sob a perspectiva de regressão. A cada clipe da partida associa-se um \textit{arousal score}, um valor escalar contínuo que representa a intensidade emocional daquele trecho. Todo clipe cujo score supera um limiar pré-definido é considerado um highlight. Para isso, a partida é subdividida em $n$ pares alinhados de clipe visual e mel espectrograma. O modelo recebe cada par como entrada e produz, como saída, um único valor escalar, o \textit{arousal score} predito para aquele clipe.
+
+\subsection{Construção dos Labels}
+
+Cada partida possui anotações de momentos-chave fornecidas pelo dataset SoccerNet: gols, cartões, defesas, escanteios, entre outros. Para cada gol anotado no instante $t_{\text{gol}}$, associa-se uma curva gaussiana centrada nesse instante. O \textit{arousal score} de qualquer instante $t$ da partida é definido por:
+
+\begin{equation}
+    a(t) = \exp\left(-\frac{(t - t_{\text{gol}})^2}{2\sigma^2}\right)
+    \label{eq:arousal}
+\end{equation}
+
+\noindent onde:
+\begin{itemize}
+    \item $t_{\text{gol}}$ é o instante do gol, onde o score atinge seu pico máximo $a(t_{\text{gol}}) = 1{,}0$;
+    \item $\sigma$ controla o raio de influência temporal do gol, determinado pelos parâmetros \texttt{--window\_before} e \texttt{--window\_after};
+    \item o score decai simetricamente à medida que $t$ se afasta de $t_{\text{gol}}$, tendendo a zero fora da janela de highlight.
+\end{itemize}
+
+\subsection{Agregação por Clipe: \texttt{np.max}}
+
+Ao fatiar a partida em clipes, cada clipe contém múltiplos frames, cada um com um score $a(t)$ calculado pela Equação~\ref{eq:arousal}. O score final associado ao clipe é o valor máximo entre todos os seus frames:
+
+\begin{equation}
+    s_{\text{clipe}} = \max_{t \,\in\, \text{clipe}}\; a(t)
+\end{equation}
+
+A escolha de \texttt{np.max} ao invés de \texttt{np.mean} é empírica. Considere um clipe de 5 segundos a 2\,fps: esse clipe contém 10 frames. Se apenas 2 desses frames estão próximos do pico da gaussiana, a média dilui o sinal pelos 8 frames restantes, cujo score é próximo de zero. O máximo preserva o sinal mais forte do clipe, indicando que aquele clipe contém um momento de alta intensidade, independentemente de quantos frames não emocionantes coexistem nele.
+
+\section{Pipeline de Preparação de Dados}
+
+\subsection{Dataset e Configuração}
+
+Os dados utilizados neste projeto são provenientes do dataset SoccerNet, que requer autorização prévia para acesso aos arquivos de vídeo. Para fins acadêmicos e não comerciais, submetemos uma solicitação de uso à equipe do SoccerNet, que nos forneceu uma senha de acesso aos arquivos protegidos.
+
+Foram utilizados jogos da Premier League inglesa (EPL) das temporadas 2014/2015, 2015/2016 e 2016/2017, totalizando 95 partidas distribuídas da seguinte forma:
+
+
+\begin{itemize}
+    \item \textbf{Treino:} 58 jogos
+    \item \textbf{Validação:} 19 jogos
+    \item \textbf{Teste:} 18 jogos
+\end{itemize}
+
+Cada partida é composta por dois arquivos de vídeo (\texttt{1\_224p.mkv} e \texttt{2\_224p.mkv}), correspondentes ao primeiro e segundo tempo, e um arquivo de anotações (\texttt{Labels-v2.json}) são provenientes do desafio de \textit{action spotting} promovido pelo próprio SoccerNet, no qual anotadores identificaram eventos relevantes ao longo das partidas usando visão computacional.
+
+A divisão dos jogos em treino, validação e teste segue a partição oficial do SoccerNet, definida nos arquivos \texttt{SoccerNetGames.json}, \texttt{SoccerNetGamesTrain.json}, \texttt{SoccerNetGamesValid.json} e \texttt{SoccerNetGamesTest.json}, disponíveis no repositório oficial do dataset. Esses arquivos especificam, para cada partida, o split ao qual ela pertence, garantindo que a divisão utilizada neste projeto seja reprodutível.
+\subsection{Baixando os Dados — \texttt{download\_games.py}}
+
+O script \texttt{download\_games.py} gerencia o download dos arquivos das partidas a serem utilizadas. 
+
+A função \texttt{normalize\_splits} trata os diferentes protocolos de split do SoccerNet: a entrada pode ser um split explícito como \texttt{"train"}, um atalho como \texttt{"v1"} (equivalente a \texttt{["train", "valid", "test"]}) ou \texttt{"all"} (que inclui também o split \texttt{"challenge"}), ou ainda uma entrada inválida, que é rejeitada com uma mensagem de erro. A saída dessa função é sempre uma lista normalizada de splits válidos.
+
+A função \texttt{game\_already\_downloaded} verifica se todos os arquivos esperados de uma partida já existem no disco. Ela é utilizada dentro de \texttt{download\_games} para garantir que jogos já baixados sejam pulados em execuções subsequentes. Por fim, o modo \texttt{--dry\_run} lista quais jogos seriam baixados e quais seriam pulados, sem efetivamente baixar nada, útil para inspecionar o estado do diretório antes de uma operação longa.
+
+\subsection{Indexação dos Jogos — \texttt{build\_index.py}}
+
+O script \texttt{build\_index.py} constrói o arquivo \texttt{games\_index.csv}, que funciona como um organizador central do dataset. Ele é consultado por scripts subsequentes do pipeline para saber quais jogos estão disponíveis, onde seus arquivos estão no disco e a qual split cada um pertence.
+
+Para cada jogo, o CSV armazena as seguintes colunas:
+
+\begin{itemize}
+    \item \texttt{game\_id}: identificador legível e único do jogo, gerado pela função \texttt{make\_game\_id};
+    \item \texttt{league}: código da liga (ex: \texttt{epl});
+    \item \texttt{season}: temporada (ex: \texttt{2014-2015});
+    \item \texttt{split}: partição do dataset (\texttt{train}, \texttt{valid} ou \texttt{test});
+    \item \texttt{1\_224p.mkv}, \texttt{2\_224p.mkv}, \texttt{Labels-v2.json}: caminhos absolutos para cada arquivo da partida no disco;
+    \item \texttt{valid}: booleano que indica se todos os arquivos esperados estão presentes no disco.
+\end{itemize}
+
+A função \texttt{make\_game\_id} gera o identificador a partir do caminho relativo do jogo no formato SoccerNet. A coluna \texttt{valid} é preenchida pela função \texttt{game\_already\_downloaded}, herdada do \texttt{download\_games.py}, e indica se todos os arquivos esperados estão presentes no disco para aquela partida. Jogos com \texttt{valid=False} foram identificados mas ainda não foram baixados, são excluídos do pipeline de processamento pelos scripts seguintes.
+\begin{thebibliography}{9}
+
+\bibitem{soccernet-data}
+SoccerNet.
+\textit{SoccerNet Data}.
+Disponível em: \url{https://www.soccer-net.org/data}.
+Acesso em: \today.
+
+\bibitem{soccernet-github}
+SoccerNet.
+\textit{SoccerNet GitHub Repository}.
+Disponível em: \url{https://github.com/SoccerNet/SoccerNet/tree/main}.
+Acesso em: \today.
+
+\end{thebibliography}
+
+\end{document}
