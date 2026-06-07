@@ -17,6 +17,11 @@ from video_slicer import VideoSlicer
 from video_and_audio_get_sequences import VideoAudioGetSequences
 from moviepy.video.io.VideoFileClip import VideoFileClip
 
+# Jogos que travam o MoviePy (codec/formato problemático) e devem ser pulados
+SKIP_GAMES = {
+    "epl_2014-2015_2015-05-17-18-00-manchester-united-1-1-arsenal",
+}
+
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_PROCESSED_DIR = os.path.join(_PROJECT_ROOT, "data", "processed")
 
@@ -324,6 +329,13 @@ def main():
 
     all_rows = []
     for i, game in enumerate(games, 1):
+        print(f"\n[{i}/{total_games}] {game['game_id']} {game['split']}")
+
+        if game["game_id"] in SKIP_GAMES:
+            print(" Jogo na lista de exclusão, pulando...")
+            games_pulados += 1
+            continue
+
         game_dir = os.path.dirname(game["1_224p.mkv"])
         clips_dir = os.path.join(
             args.processed_dir,
@@ -331,8 +343,6 @@ def main():
             game["season"],
             os.path.basename(game_dir),
         )
-
-        print(f"\n[{i}/{total_games}] {game['game_id']}")
 
         intervals_per_half = {}
         try:
