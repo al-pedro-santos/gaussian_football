@@ -22,14 +22,31 @@ DEFAULT_PROCESSED_DIR = os.path.join(_PROJECT_ROOT, "data", "processed")
 
 
 def parse_game_time(game_time):
-    # converte "half - mm:ss" para (half, segundos)
+    """Converte "half - mm:ss" para (half, seconds).
+
+    Args:
+        game_time (str): Momento do jogo.
+
+    Returns:
+        tuple[int, int]: Tupla (half, seconds), onde half é o tempo
+        da partida (1 ou 2) e seconds é o instante convertido para
+        segundos.
+    """
     half, brute_time = game_time.split(" - ")
     min, sec = brute_time.split(":")
     return int(half), int(min) * 60 + int(sec)
 
 
 def extract_goals(labels_path):
-    # extrai os timestamps dos gols do Labels-v2.json
+    """Extrai os timestamps dos gols de uma partida a partir de Labels-v2.json.
+
+    Args:
+        labels_path (str): Path do Labels-v2.json de uma partida.
+
+    Returns:
+        list[tuple[int, int]]: Lista de tuplas (half, seconds), uma
+            para cada gol anotado na partida.
+    """
     with open(labels_path) as f:
         data = json.load(f)
 
@@ -42,7 +59,15 @@ def extract_goals(labels_path):
 
 
 def load_games_index(index_path):
-    # carrega um csv de índice de jogos e devolve apenas as linhas marcadas como válidas.
+    """Carrega o CSV de índice de jogos e retorna apenas as linhas válidas.
+
+    Args:
+        index_path (str): Path do CSV de índice (games_index.csv).
+
+    Returns:
+        list[dict]: Lista de dicionários, um por jogo válido (coluna
+            'valid' == 'True'), com as colunas do índice como chaves.
+    """
     with open(index_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         return [row for row in reader if row["valid"] == "True"]
@@ -51,7 +76,26 @@ def load_games_index(index_path):
 def goals_to_intervals(
     goals, duration, current_half, window_before=15, window_after=15
 ):
-    # gera pequenos intervalos de tempo em torno de cada gol no tempo determinado, respeitando os limites do tempo total da metade.
+    """Gera intervalos de tempo ao redor de cada gol de um dado tempo da partida.
+
+    Para cada gol no tempo (half) especificado, cria um intervalo
+    [gol - window_before, gol + window_after], respeitando os limites
+    [0, duration] da metade.
+
+    Args:
+        goals (list[tuple[int, int]]): Lista de tuplas (half, seconds)
+            retornada por extract_goals.
+        duration (int): Duração total do tempo atual em segundos.
+        current_half (int): Tempo da partida (1 ou 2).
+        window_before (int): Segundos antes do gol a incluir no intervalo.
+            Default: 15.
+        window_after (int): Segundos após o gol a incluir no intervalo.
+            Default: 15.
+
+    Returns:
+        list[tuple[int, int, int]]: Lista de tuplas (half, start, end), uma
+            para cada gol do tempo especificado, com start e end em segundos.
+    """
     intervals = []
 
     for half, seconds in goals:
@@ -66,10 +110,25 @@ def goals_to_intervals(
 
 
 def build_arousal_timeline(video_path, intervals, half, fps):
-    with VideoFileClip(video_path) as video:
-        duration = math.ceil(video.duration)  # retorna segundos em float
+    """Constrói a timeline de arousal de um tempo da partida.
 
-    half_intervals = []  # intervalos de um dos tempos da partida
+    Filtra os intervalos do tempo especificado, recorta-os aos limites do
+    vídeo e os repassa ao VideoScorerPreprocessor, que modela cada intervalo
+    como uma gaussiana.
+
+    Args:
+        video_path (str): Path do vídeo do tempo da partida.
+        intervals (list[tuple[int, int, int]]): Tuplas (half, start, end).
+        half (int): Tempo da partida a processar (1 ou 2).
+        fps (int): Frames por segundo, para converter segundos em frames.
+
+    Returns:
+        np.ndarray: Vetor 1D com o arousal score de cada frame no intervalo [0, 1].
+    """
+    with VideoFileClip(video_path) as video:
+        duration = math.ceil(video.duration)
+
+    half_intervals = []
 
     for h, start, end in intervals:
         if h != half:
@@ -86,6 +145,30 @@ def build_arousal_timeline(video_path, intervals, half, fps):
 
 
 def generate_clips(game_dir, clips_dir, intervals_per_half, fps=25, grayscale=True):
+    """Gera os clipes de vídeo e mel espectrogramas de uma partida.
+
+    Para cada tempo da partida, percorre os intervalos fornecidos e
+    salva um clipe de vídeo por intervalo. Quando o áudio existe e não
+    é silencioso, salva também o mel espectrograma. Erros em clipes
+    individuais são capturados e o processamento continua.
+
+    Os arquivos são organizados em:
+        clips_dir/half_{n}/video/clip_{idx}.mp4
+        clips_dir/half_{n}/mel_spectograma/clip_{idx}.npy
+
+    Args:
+        game_dir (str): Diretório da partida, contendo os arquivos
+            {half}_224p.mkv.
+        clips_dir (str): Diretório de saída onde os clipes serão salvos.
+        intervals_per_half (dict[int, list[tuple[float, float]]]): Intervalos
+            (start, end) por tempo gerados pelo VideoSlicer.
+        fps (int): Frames por segundo dos clipes de saída. Default: 25 (SoccerNet).
+        grayscale (bool): Se True, salva os clipes em escala de cinza.
+            Default: True.
+
+    Returns:
+        None: Os clipes são salvos diretamente em disco.
+    """
     processor = VideoAudioGetSequences()
 
     for half in [1, 2]:
@@ -128,6 +211,24 @@ def generate_clips(game_dir, clips_dir, intervals_per_half, fps=25, grayscale=Tr
 def build_labels(
     game_dir, clips_dir, intervals_per_half, window_before=15, window_after=15, fps=25
 ):
+    """Calcula o arousal score de cada clipe de uma partida.
+
+    Para cada tempo, constrói a timeline de arousal via gaussianas e atribui
+    a cada clipe o valor máximo (np.max) da timeline em seu intervalo.
+
+    Args:
+        game_dir (str): Diretório da partida ({half}_224p.mkv, Labels-v2.json).
+        clips_dir (str): Diretório onde os clipes devem ser gerados.
+        intervals_per_half (dict[int, list[tuple[float, float]]]): Intervalos
+            (start, end) por tempo.
+        window_before (int): Segundos antes do gol na janela. Default: 15.
+        window_after (int): Segundos após o gol na janela. Default: 15.
+        fps (int): Frames por segundo. Default: 25.
+
+    Returns:
+        list[dict]: Um dict por clipe com 'clip_path', 'mel_path' (ou None)
+            e 'arousal_score'.
+    """
     labels_path = os.path.join(game_dir, "Labels-v2.json")
     goals = extract_goals(labels_path)
 
@@ -135,7 +236,7 @@ def build_labels(
 
     for half in [1, 2]:
         video_path = os.path.join(game_dir, f"{half}_224p.mkv")
-        # cria intervalos usando a duração desse half
+
         with VideoFileClip(video_path) as video:
             duration = math.floor(video.duration)
 
@@ -145,11 +246,9 @@ def build_labels(
             half,
             window_before=window_before,
             window_after=window_after,
-        )  # constrói os intervalos
+        )
 
-        timeline = build_arousal_timeline(
-            video_path, intervals, half, fps
-        )  # usa os intervalos para construir a timeline
+        timeline = build_arousal_timeline(video_path, intervals, half, fps)
 
         half_clips_dir = os.path.join(clips_dir, f"half_{half}")
         video_dir = os.path.join(half_clips_dir, "video")
@@ -187,6 +286,22 @@ def build_labels(
 
 
 def main():
+    """Executa o pipeline de geração de clipes e labels para todos os jogos.
+
+    Lê o índice de jogos válidos, fatia cada partida via VideoSlicer, gera os
+    clipes e calcula os arousal scores, colocando tudo em um CSV.  Pula
+    clipes e labels já existentes de forma independente, evitando reprocessamento.
+
+    Argumentos de linha de comando:
+        --index_path:    Caminho do games_index.csv de entrada.
+        --processed_dir: Diretório raiz onde os clipes são salvos.
+        --fps:           Frames por segundo dos clipes. Default: 25.
+        --n_slices:      Clipes por tempo da partida. Default: 330.
+        --window_before: Segundos antes do gol na janela. Default: 15.
+        --window_after:  Segundos após o gol na janela. Default: 15.
+        --output:        Caminho do labels_all.csv de saída.
+    """
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--index_path", default="data/labels/games_index.csv")
     parser.add_argument("--processed_dir", default=DEFAULT_PROCESSED_DIR)
@@ -273,4 +388,16 @@ def main():
         df = pd.DataFrame(all_rows)
         os.makedirs(os.path.dirname(args.output), exist_ok=True)
         df.to_csv(args.output, index=False)
-        print(f"  ✓ {len(rows)} clips gerados | acumulado: {len(df)} clips")
+        print(f"{len(rows)} clips gerados | acumulado: {len(df)} clips")
+
+    print(f"\n{'='*50}")
+    print(f"Concluído.")
+    print(f"  Jogos processados: {games_processados}/{total_games}")
+    print(f"  Jogos pulados:     {games_pulados}")
+    print(f"  Clips gerados nesta execução: {total_clips}")
+    print(f"  Total de linhas no CSV: {len(all_rows)}")
+    print(f"{'='*50}")
+
+
+if __name__ == "__main__":
+    main()

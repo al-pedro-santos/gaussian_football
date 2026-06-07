@@ -52,6 +52,7 @@
 
 % ============================================================
 \section{Visão Geral do Projeto}
+\label{sec:visao_geral}
 % ============================================================
 
 O sistema automatiza a geração de \textit{highlights} (a princípio, gols) de uma partida de futebol, utilizando tanto imagens quanto áudio (na forma de mel espectrogramas) extraídos de uma transmissão televisiva.
@@ -188,6 +189,29 @@ Para cada jogo, o CSV armazena as seguintes colunas:
 \end{itemize}
 
 A função \texttt{make\_game\_id} gera o identificador a partir do caminho relativo do jogo no formato SoccerNet. A coluna \texttt{valid} é preenchida pela função \texttt{game\_already\_downloaded}, herdada do \texttt{download\_games.py}, e indica se todos os arquivos esperados estão presentes no disco para aquela partida. Jogos com \texttt{valid=False} foram identificados mas ainda não foram baixados, são excluídos do pipeline de processamento pelos scripts seguintes.
+
+\subsection{Geração de Clipes e Labels  — \texttt{build\_labels.py}}
+
+O script \texttt{build\_labels.py} é responsável tanto por gerar os clipes de vídeo e mel espectrograma (\texttt{generate\_clips}) quanto por construir o arquivo \texttt{labels\_all.csv} (\texttt{build\_labels}), que para cada clipe armazena:
+
+\begin{itemize}
+    \item \texttt{clip\_path}: caminho para o arquivo de vídeo do clipe;
+    \item \texttt{mel\_path}: caminho para o mel espectrograma correspondente;
+    \item \texttt{arousal\_score}: score de intensidade do clipe, calculado via gaussiana;
+    \item \texttt{game\_id}, \texttt{season}, \texttt{split}: metadados da partida.
+\end{itemize}
+
+A função \texttt{generate\_clips} itera sobre os dois tempos de cada partida e produz, para cada intervalo gerado pelo \texttt{VideoSlicer}, um clipe de vídeo e, quando o áudio não for silencioso, um mel espectrograma. Os arquivos são organizados na estrutura \texttt{half\_1/video/} e \texttt{half\_1/mel\_spectograma/} dentro do diretório processado de cada partida. É a função \texttt{build\_labels} que realiza o cálculo do arousal score descrito na Seção ~\ref{sec:visao_geral}, consultando a gaussiana gerada pelo \texttt{VideoScorerPreprocessor} e extraindo o valor máximo de cada intervalo via \texttt{np.max}.
+
+O \texttt{main} verifica separadamente se os clipes já foram gerados e se os labels já existem no CSV. Isso garante que em caso de interrupção, o pipeline retome do ponto correto sem regenerar dados já processados nem perder progresso parcial.
+
+\section{Pré-processamento}
+
+\subsection{\texttt{video\_slicer.py} — Fatiamento de Vídeo}
+
+A classe \texttt{VideoSlicer} é responsável por fatiar vídeos em intervalos de tempo. Seu único parâmetro de inicialização é \texttt{n\_slices}, o número de clipes a serem produzidos a partir do vídeo. O método \texttt{get\_intervals} retorna uma lista de tuplas \texttt{(start, end)}, cada uma representando os instantes inicial e final de um intervalo em segundos. O usuário deve fornecer ou a duração desejada de cada intervalo (\texttt{slice\_length}), ou a quantidade desejada de intervalos (\texttt{n\_slices}), nunca os dois simultaneamente. Ao montar os intervalos, o código garante que o \texttt{end} do último clipe não ultrapasse a duração total do vídeo via \texttt{end = min(start + length, total)}.
+
+
 \begin{thebibliography}{9}
 
 \bibitem{soccernet-data}
