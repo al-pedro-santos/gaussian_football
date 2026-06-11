@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-from torchvision.models import resnet18, ResNet18_Weights
-
+from torchvision.models import resnet18, resnet34, ResNet18_Weights, ResNet34_Weights
 
 class ResNetLSTM(nn.Module):
     def __init__(
@@ -64,3 +63,131 @@ class ResNetLSTM(nn.Module):
         out = torch.cat([h_fwd, h_bwd], dim=1)  # (B, hidden*2)
 
         return self.head(out)  # (B, 1)
+
+class ResNetLSTM34(nn.Module):
+    def __init__(
+        self,
+        frame_step=5,
+        hidden_size=256,
+        num_layers=2,
+        use_dropout=False,
+        dropout_p=0.3,
+    ):
+        super().__init__()
+
+        self.frame_step = frame_step
+
+        # extrator de features por frame
+        backbone = resnet34(weights=ResNet34_Weights.DEFAULT)
+
+        # remove a camada de classificação final
+        self.cnn = nn.Sequential(*list(backbone.children())[:-1])  # (B*T, 512, 1, 1)
+
+        # primeiro conv para 1 canal (grayscale)
+        self.cnn[0] = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+
+        cnn_out_size = 512
+
+        self.lstm = nn.LSTM(
+            cnn_out_size,
+            hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=True,
+            dropout=dropout_p if num_layers > 1 else 0,
+        )
+
+        self.head = nn.Sequential(
+            nn.Linear(hidden_size * 2, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout_p) if use_dropout else nn.Identity(),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        # x: (B, T, C, H, W)
+        B, T, C, H, W = x.shape
+
+        # subsample de frames
+        x = x[:, :: self.frame_step, :, :, :]
+        T_sub = x.shape[1]
+
+        # CNN em cada frame
+        x = x.reshape(B * T_sub, C, H, W)
+        x = self.cnn(x)  # (B*T_sub, 512, 1, 1)
+        x = x.view(B, T_sub, -1)  # (B, T_sub, 512)
+
+        # sequência temporal
+        out, _ = self.lstm(x)  
+        
+        h_fwd = out[:, -1, :self.lstm.hidden_size]  
+        h_bwd = out[:, 0, self.lstm.hidden_size:]   
+        
+        # Concatena as saídas das duas direções
+        out_features = torch.cat([h_fwd, h_bwd], dim=1)  # (B, hidden_size * 2)
+
+        return self.head(out_features)  #(B, 1)
+
+class ResNetLSTM50(nn.Module):
+    def __init__(
+        self,
+        frame_step=5,
+        hidden_size=256,
+        num_layers=2,
+        use_dropout=False,
+        dropout_p=0.3,
+    ):
+        super().__init__()
+
+        self.frame_step = frame_step
+
+        # extrator de features por frame
+        backbone = resnet50(weights=ResNet50_Weights.DEFAULT)
+
+        # remove a camada de classificação final
+        self.cnn = nn.Sequential(*list(backbone.children())[:-1])  # (B*T, 512, 1, 1)
+
+        # primeiro conv para 1 canal (grayscale)
+        self.cnn[0] = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+
+        cnn_out_size = 2048
+
+        self.lstm = nn.LSTM(
+            cnn_out_size,
+            hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=True,
+            dropout=dropout_p if num_layers > 1 else 0,
+        )
+
+        self.head = nn.Sequential(
+            nn.Linear(hidden_size * 2, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout_p) if use_dropout else nn.Identity(),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        # x: (B, T, C, H, W)
+        B, T, C, H, W = x.shape
+
+        # subsample de frames
+        x = x[:, :: self.frame_step, :, :, :]
+        T_sub = x.shape[1]
+
+        # CNN em cada frame
+        x = x.reshape(B * T_sub, C, H, W)
+        x = self.cnn(x)  # (B*T_sub, 512, 1, 1)
+        x = x.view(B, T_sub, -1)  # (B, T_sub, 512)
+
+        # sequência temporal
+        out, _ = self.lstm(x)  
+        
+        h_fwd = out[:, -1, :self.lstm.hidden_size]  
+        h_bwd = out[:, 0, self.lstm.hidden_size:]   
+        
+        # Concatena as saídas das duas direções
+        out_features = torch.cat([h_fwd, h_bwd], dim=1)  # (B, hidden_size * 2)
+
+        return self.head(out_features)  #(B, 1)

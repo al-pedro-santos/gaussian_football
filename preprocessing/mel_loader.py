@@ -121,7 +121,6 @@ class MelSpectrogramDataset(Dataset):
     def __repr__(self):
         return (f"MelSpectrogramDataset(n_samples={len(self)},\n score='{self.score_col}',\n binary_label={self.binary_label})")
 
-
 def build_mel_dataloader(csv_path, batch_size, shuffle: bool, num_workers: int, pin_memory=False,
                          **dataset_kwargs): # passar os argumentos do MelSpectogramaDataset
     '''
