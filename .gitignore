@@ -45,3 +45,4 @@ env/
 Thumbs.db
 models/checkpoints/
 *.pth
+src/old/
