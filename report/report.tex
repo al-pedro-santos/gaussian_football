@@ -71,7 +71,19 @@ Cada partida possui anotações de momentos-chave fornecidas pelo dataset Soccer
 \noindent onde:
 \begin{itemize}
     \item $t_{\text{gol}}$ é o instante do gol, onde o score atinge seu pico máximo $a(t_{\text{gol}}) = 1{,}0$;
-    \item $\sigma$ controla o raio de influência temporal do gol, determinado pelos parâmetros \texttt{--window\_before} e \texttt{--window\_after};
+    \item $\sigma$ é calibrado de forma que o score nas bordas do intervalo
+    \[
+        \left[t_{\text{gol}} - \texttt{window\_before},\;
+        t_{\text{gol}} + \texttt{window\_after}\right]
+    \]
+    seja exatamente igual ao threshold $\tau$ (default: $0{,}5$). Matematicamente,
+    \[
+        \sigma = \frac{d}{\sqrt{-2\ln(\tau)}}, \quad
+        d = \frac{\texttt{window\_before} + \texttt{window\_after}}{2}.
+    \]
+    O pico da gaussiana coincide com $t_{\text{gol}}$ apenas quando
+    \texttt{window\_before} $=$ \texttt{window\_after}.
+
     \item o score decai simetricamente à medida que $t$ se afasta de $t_{\text{gol}}$, tendendo a zero fora da janela de highlight.
 \end{itemize}
 
