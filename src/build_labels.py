@@ -20,6 +20,7 @@ from moviepy.video.io.VideoFileClip import VideoFileClip
 # Jogos que travam o MoviePy (codec/formato problemático) e devem ser pulados
 SKIP_GAMES = {
     "epl_2014-2015_2015-05-17-18-00-manchester-united-1-1-arsenal",
+    "epl_2016-2017_2016-10-29-17-00-tottenham-1-1-leicester",
 }
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -311,10 +312,11 @@ def main():
     parser.add_argument("--index_path", default="data/labels/games_index.csv")
     parser.add_argument("--processed_dir", default=DEFAULT_PROCESSED_DIR)
     parser.add_argument("--fps", type=int, default=25)
-    parser.add_argument("--n_slices", type=int, default=330)
+    parser.add_argument("--n_slices", type=int, default=750)
     parser.add_argument("--window_before", type=int, default=15)
     parser.add_argument("--window_after", type=int, default=15)
     parser.add_argument("--output", default="data/labels/labels_all.csv")
+    parser.add_argument("--only_labels", action="store_true", help="Pula geração de clips, só recalcula os labels.")
     args = parser.parse_args()
 
     slicer = VideoSlicer(n_slices=args.n_slices)
@@ -359,7 +361,9 @@ def main():
             os.path.isdir(video_dir_half1) and len(os.listdir(video_dir_half1)) > 0
         )
 
-        if clips_existem:
+        if args.only_labels:
+            print(f" Modo only_labels: pulando geração de clips.")
+        elif clips_existem:
             print(f" Clips já existem, pulando geração...")
         else:
             print(f" Vai gerar clips agora para {game['game_id']}")
