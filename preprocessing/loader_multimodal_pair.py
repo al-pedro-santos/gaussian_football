@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import random
 import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
@@ -11,10 +12,61 @@ import torchvision
 
 from datasets_mel_video import default_mel_transform
 
+# Data Augmentation no Mel Espectrograma
+
+class SpecAugment:
+    def __init__(self, freq_mask_param=20, time_mask_param=40, n_freq_masks=1, n_time_masks=1):
+        self.freq_mask_param = freq_mask_param
+        self.time_mask_param = time_mask_param
+        self.n_freq_masks = n_freq_masks
+        self.n_time_masks = n_time_masks
+
+    def __call__(self, mel):
+        mel = mel.clone()
+        _, H, W = mel.shape
+
+        for _ in range(self.n_freq_masks):
+            f = random.randint(0, self.freq_mask_param)
+            f0 = random.randint(0, max(H - f, 0))
+            mel[:, f0:f0+f, :] = 0
+
+        for _ in range(self.n_time_masks):
+            t = random.randint(0, self.time_mask_param)
+            t0 = random.randint(0, max(W - t, 0))
+            mel[:, :, t0:t0+t] = 0
+
+        return mel
+
+
+class AddGaussianNoise:
+    def __init__(self, std=0.05):
+        self.std = std
+
+    def __call__(self, mel):
+        return mel + torch.randn_like(mel) * self.std
+
+# Utilidades
+
+TARGET_SHAPE = (128, 256)
+
 train_video_transform = v2.Compose([
     v2.RandomHorizontalFlip(p=0.5),
     v2.ColorJitter(brightness=0.2, contrast=0.2),
 ])
+
+train_mel_transform = v2.Compose([
+    default_mel_transform(TARGET_SHAPE),
+    AddGaussianNoise(std=0.05),
+    SpecAugment(freq_mask_param=20, time_mask_param=40),
+])
+
+split_pt = {
+    "train": "Treino",
+    "valid": "Validação",
+    "test" : "Teste",
+}
+
+# Classes Principais
 
 class MultiModalDataset(Dataset):
     def __init__(
@@ -25,7 +77,7 @@ class MultiModalDataset(Dataset):
         score_col="arousal_score",
         binary_label=False,
         threshold=0.5,
-        target_shape=(128, 256),
+        target_shape=TARGET_SHAPE,
         is_grayscale=False,
         video_transform=None,
         mel_transform=None,
@@ -46,7 +98,7 @@ class MultiModalDataset(Dataset):
             & self.df["mel_path"].apply(lambda p: Path(p).exists())
         ].reset_index(drop=True)
 
-        print(f"Dataset: {len(self.df)}/{n_before} exemplos válidos.")
+        print(f"Dataset de {split_pt[split]}: {len(self.df)}/{n_before} exemplos válidos.")
 
         self.score_col = score_col
         self.binary_label = binary_label
@@ -58,7 +110,7 @@ class MultiModalDataset(Dataset):
             self.high_df = self.df[self.df[score_col] >= threshold].reset_index(drop=True)
 
             print(f"Low: {len(self.low_df)}")
-            print(f"High: {len(self.high_df)}")
+            print(f"High: {len(self.high_df)}\n")
 
         self.is_grayscale = is_grayscale
         self.video_transform = video_transform
@@ -183,7 +235,7 @@ def build_multimodal_dataloader(
     score_col="arousal_score",
     binary_label=False,
     threshold=0.5,
-    target_shape=(128, 256),
+    target_shape=TARGET_SHAPE,
     is_grayscale=False,
     video_transform=None,
     mel_transform=None,

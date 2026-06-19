@@ -1,30 +1,11 @@
-import torch
-from transformers import AutoModel
-from models.nn.resnetlstm_multimodal import ResNetLSTM_MultiModal
+import pandas as pd
+from pathlib import Path
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+df = pd.read_csv(TEST_PATH)  # roda pra train/valid também se quiser comparar
 
-model_ae = AutoModel.from_pretrained("hance-ai/audiomae", trust_remote_code=True).to(device)
+df["clip_exists"] = df["clip_path"].apply(lambda p: Path(p).exists())
+df["mel_exists"] = df["mel_path"].apply(lambda p: Path(p).exists())
 
-B = 2
-video = torch.randn(B, 50, 1, 224, 224, device=device)
-mel = torch.randn(B, 1, 128, 1024, device=device)
+missing = df[~(df["clip_exists"] & df["mel_exists"])]
 
-for use_fusion in [True, False]:
-    torch.cuda.reset_peak_memory_stats(device)
-
-    model = ResNetLSTM_MultiModal(audiomae=model_ae, backbone_name="resnet18", use_fusion=use_fusion).to(device)
-    out = model(video, mel)
-
-    loss = out.sum()
-    loss.backward()
-
-    print(f"use_fusion={use_fusion}  out.shape={out.shape}")
-    print(f"  peak mem: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
-
-    for name, p in model.named_parameters():
-        if p.requires_grad and p.grad is None:
-            print("  sem gradiente:", name)
-
-    del model
-    torch.cuda.empty_cache()
+print(missing["game_id"].value_counts())
