@@ -1,0 +1,241 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[portuguese]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{booktabs}
+\usepackage{dirtree}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+
+\geometry{margin=2.5cm}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue
+}
+
+\title{
+    \vspace{-2cm}
+    \Large \textbf{IMPA Tech} \\[0.5cm]
+    \large Machine Learning 2 \\
+    \small Prof. Francisco Ganacim \quad Prof. Daniel Yukimura \\[1.5cm]
+    \rule{\linewidth}{0.5pt} \\[0.4cm]
+    {\Huge \textbf{Gaussian Football n-D}} \\[0.2cm]
+    \large Documentação Técnica \\
+    \rule{\linewidth}{0.5pt} \\[1.5cm]
+    \normalsize
+    \begin{tabular}{c}
+        Gabriel Ferreira Silva \\[0.3cm]
+        Letícia Aleixo Ferreira \\[0.3cm]
+        Pedro Miguel Rocha Santos
+    \end{tabular}
+}
+\date{\vspace{1cm} Rio de Janeiro, \today}
+
+
+% Comando para o argmax
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+\newpage
+
+\tableofcontents
+\newpage
+
+
+% ============================================================
+\section{Visão Geral do Projeto}
+\label{sec:visao_geral}
+% ============================================================
+
+\subsection{O Problema}
+
+Gostaríamos de que fosse possível a extração dos melhores momentos de uma partida de futebol a partir do vídeo e áudio brutos da transmissão limpa de uma partida em específico. Isso facilitaria o trabalho de editores de vídeo, comentadores e espectadores que não puderam ver o jogo de acompanharem os momentos marcantes de um jogo de futebol.
+
+\subsection{Definição Formal do Problema}
+
+O sistema automatiza a geração de \textit{highlights} (a princípio, gols) de uma partida de futebol, utilizando tanto imagens quanto áudio (na forma de mel espectrogramas) extraídos de uma transmissão televisiva.
+
+O problema é formulado sob a perspectiva de regressão. A cada clipe da partida associa-se um \textit{arousal score}, um valor escalar contínuo que representa a intensidade emocional daquele trecho. Todo clipe cujo score supera um limiar pré-definido é considerado um highlight. Para isso, a partida é subdividida em $n$ pares alinhados de clipe visual e mel espectrograma. O modelo recebe cada par como entrada e produz, como saída, um único valor escalar, o \textit{arousal score} predito para aquele clipe.
+
+\subsection{Construção dos Labels}
+
+Cada partida possui anotações de momentos-chave fornecidas pelo dataset SoccerNet: gols, cartões, defesas, escanteios, entre outros. Considere G o conjunto dos gols em uma partida específica. Para cada gol $g \in G$ anotado no instante $t_{\text{g}}$, associa-se uma curva gaussiana centrada nesse instante de tempo. O \textit{arousal score} de qualquer instante $t$ que não seja um instante de gol na partida é definido por:
+
+\begin{equation}
+    a(t) = \argmax_{g \in G} \Bigg[ \exp\left(-\frac{(t - t_{\text{g}})^2}{2\sigma^2}\right)\Bigg]
+    \label{eq:arousal}
+\end{equation}
+
+\noindent onde:
+\begin{itemize}
+    \item $t_{\text{g}}$ é o instante do gol $g$, onde o score atinge seu pico máximo $a(t_{\text{g}}) = 1{,}0$;
+    \item $\sigma$ controla o raio de influência temporal do gol, determinado pelos parâmetros \texttt{--window\_before} e \texttt{--window\_after};
+    \item o score decai simetricamente à medida que $t$ se afasta de $t_{\text{g}}$, tendendo a zero fora da janela de highlight.
+\end{itemize}
+
+\subsection{Agregação por Clipe: \texttt{np.max}}
+
+Ao fatiar a partida em clipes, cada clipe contém múltiplos frames, cada um com um score $a(t)$ calculado pela Equação~\ref{eq:arousal}. O score final associado ao clipe é o valor máximo entre todos os seus frames:
+
+\begin{equation}
+    s_{\text{clipe}} = \max_{t \,\in\, \text{clipe}}\; a(t)
+\end{equation}
+
+A escolha de \texttt{np.max} ao invés de \texttt{np.mean} é empírica. Considere um clipe de 5 segundos a 2\,fps: esse clipe contém 10 frames. Se apenas 2 desses frames estão próximos do pico da gaussiana, a média dilui o sinal pelos 8 frames restantes, cujo score é próximo de zero. O máximo preserva o sinal mais forte do clipe, indicando que aquele clipe contém um momento de alta intensidade, independentemente de quantos frames não emocionantes coexistem nele.
+
+\newpage
+
+\section{Estrutura do Projeto}
+
+O projeto está organizado em cinco diretórios principais:
+
+\begin{itemize}
+    \item \texttt{data/} — centraliza todos os dados do pipeline:
+    \begin{itemize}
+        \item \texttt{raw/} — arquivos brutos baixados do SoccerNet;
+        \item \texttt{processed/} — clipes fatiados e mel espectrogramas, espelhando a estrutura de \texttt{raw/} no formato \texttt{liga/temporada/partida/tempo/};
+        \item \texttt{labels/} — CSVs de índice e labels gerados pelos scripts de \texttt{src/}.
+    \end{itemize}
+    \item \texttt{models/nn/} — arquiteturas de redes neurais implementadas;
+    \item \texttt{preprocessing/} — utilitários de baixo nível para fatiamento de vídeo, extração de features e geração de mel espectrogramas;
+    \item \texttt{src/} — scripts principais do pipeline: download, indexação e geração de labels;
+    \item \texttt{outputs/} — reservado para resultados do modelo após o treinamento.
+\end{itemize}
+
+\newpage
+
+\subsection{Árvore de Diretórios}
+
+\bigskip
+
+\dirtree{%
+.1 gaussian\_football/.
+.2 data/.
+.3 labels/.
+.4 games\_index.csv.
+.4 labels\_all.csv.
+.3 processed/.
+.3 raw/.
+.2 models/.
+.3 nn/.
+.4 bidirectional\_lstm.py.
+.4 cnnbilstm.py.
+.4 vgg\_16\_lstm.py.
+.2 outputs/.
+.2 preprocessing/.
+.3 audio\_mel\_spectogram.py.
+.3 datasets\_mel\_video.py.
+.3 image\_resize.py.
+.3 image\_to\_array.py.
+.3 loaders.py.
+.3 mel\_loader.py.
+.3 vgg16\_feature\_extract.py.
+.3 video\_and\_audio\_get\_sequences.py.
+.3 video\_color.py.
+.3 video\_get\_sequence.py.
+.3 video\_scorer.py.
+.3 video\_slicer.py.
+.2 src/.
+.3 build\_index.py.
+.3 build\_labels.py.
+.3 download\_games.py.
+.3 treinamento.ipynb.
+.2 README.md.
+.2 requirements.txt.
+}
+
+\newpage
+\section{Pipeline de Preparação de Dados}
+
+\subsection{Dataset e Configuração}
+
+Os dados utilizados neste projeto são provenientes do dataset SoccerNet, que requer autorização prévia para acesso aos arquivos de vídeo. Para fins acadêmicos e não comerciais, submetemos uma solicitação de uso à equipe do SoccerNet, que nos forneceu uma senha de acesso aos arquivos protegidos.
+
+Foram utilizados jogos da Premier League inglesa (EPL) das temporadas 2014/2015, 2015/2016 e 2016/2017, totalizando 95 partidas distribuídas da seguinte forma:
+
+
+\begin{itemize}
+    \item \textbf{Treino:} 58 jogos
+    \item \textbf{Validação:} 19 jogos
+    \item \textbf{Teste:} 18 jogos
+\end{itemize}
+
+Cada partida é composta por dois arquivos de vídeo (\texttt{1\_224p.mkv} e \texttt{2\_224p.mkv}), correspondentes ao primeiro e segundo tempo, e um arquivo de anotações (\texttt{Labels-v2.json}) são provenientes do desafio de \textit{action spotting} promovido pelo próprio SoccerNet, no qual anotadores identificaram eventos relevantes ao longo das partidas usando visão computacional.
+
+A divisão dos jogos em treino, validação e teste segue a partição oficial do SoccerNet, definida nos arquivos \texttt{SoccerNetGames.json}, \texttt{SoccerNetGamesTrain.json}, \texttt{SoccerNetGamesValid.json} e \texttt{SoccerNetGamesTest.json}, disponíveis no repositório oficial do dataset. Esses arquivos especificam, para cada partida, o split ao qual ela pertence, garantindo que a divisão utilizada neste projeto seja reprodutível.
+\subsection{Baixando os Dados — \texttt{download\_games.py}}
+
+O script \texttt{download\_games.py} gerencia o download dos arquivos das partidas a serem utilizadas. 
+
+A função \texttt{normalize\_splits} trata os diferentes protocolos de split do SoccerNet: a entrada pode ser um split explícito como \texttt{"train"}, um atalho como \texttt{"v1"} (equivalente a \texttt{["train", "valid", "test"]}) ou \texttt{"all"} (que inclui também o split \texttt{"challenge"}), ou ainda uma entrada inválida, que é rejeitada com uma mensagem de erro. A saída dessa função é sempre uma lista normalizada de splits válidos.
+
+A função \texttt{game\_already\_downloaded} verifica se todos os arquivos esperados de uma partida já existem no disco. Ela é utilizada dentro de \texttt{download\_games} para garantir que jogos já baixados sejam pulados em execuções subsequentes. Por fim, o modo \texttt{--dry\_run} lista quais jogos seriam baixados e quais seriam pulados, sem efetivamente baixar nada, útil para inspecionar o estado do diretório antes de uma operação longa.
+
+\subsection{Indexação dos Jogos — \texttt{build\_index.py}}
+
+O script \texttt{build\_index.py} constrói o arquivo \texttt{games\_index.csv}, que funciona como um organizador central do dataset. Ele é consultado por scripts subsequentes do pipeline para saber quais jogos estão disponíveis, onde seus arquivos estão no disco e a qual split cada um pertence.
+
+Para cada jogo, o CSV armazena as seguintes colunas:
+
+\begin{itemize}
+    \item \texttt{game\_id}: identificador legível e único do jogo, gerado pela função \texttt{make\_game\_id};
+    \item \texttt{league}: código da liga (ex: \texttt{epl});
+    \item \texttt{season}: temporada (ex: \texttt{2014-2015});
+    \item \texttt{split}: partição do dataset (\texttt{train}, \texttt{valid} ou \texttt{test});
+    \item \texttt{1\_224p.mkv}, \texttt{2\_224p.mkv}, \texttt{Labels-v2.json}: caminhos absolutos para cada arquivo da partida no disco;
+    \item \texttt{valid}: booleano que indica se todos os arquivos esperados estão presentes no disco.
+\end{itemize}
+
+A função \texttt{make\_game\_id} gera o identificador a partir do caminho relativo do jogo no formato SoccerNet. A coluna \texttt{valid} é preenchida pela função \texttt{game\_already\_downloaded}, herdada do \texttt{download\_games.py}, e indica se todos os arquivos esperados estão presentes no disco para aquela partida. Jogos com \texttt{valid=False} foram identificados mas ainda não foram baixados, são excluídos do pipeline de processamento pelos scripts seguintes.
+
+\subsection{Geração de Clipes e Labels  — \texttt{build\_labels.py}}
+
+O script \texttt{build\_labels.py} é responsável tanto por gerar os clipes de vídeo e mel espectrograma (\texttt{generate\_clips}) quanto por construir o arquivo \texttt{labels\_all.csv} (\texttt{build\_labels}), que para cada clipe armazena:
+
+\begin{itemize}
+    \item \texttt{clip\_path}: caminho para o arquivo de vídeo do clipe;
+    \item \texttt{mel\_path}: caminho para o mel espectrograma correspondente;
+    \item \texttt{arousal\_score}: score de intensidade do clipe, calculado via gaussiana;
+    \item \texttt{game\_id}, \texttt{season}, \texttt{split}: metadados da partida.
+\end{itemize}
+
+A função \texttt{generate\_clips} itera sobre os dois tempos de cada partida e produz, para cada intervalo gerado pelo \texttt{VideoSlicer}, um clipe de vídeo e, quando o áudio não for silencioso, um mel espectrograma. Os arquivos são organizados na estrutura \texttt{half\_1/video/} e \texttt{half\_1/mel\_spectograma/} dentro do diretório processado de cada partida. É a função \texttt{build\_labels} que realiza o cálculo do arousal score descrito na Seção ~\ref{sec:visao_geral}, consultando a gaussiana gerada pelo \texttt{VideoScorerPreprocessor} e extraindo o valor máximo de cada intervalo via \texttt{np.max}.
+
+O \texttt{main} verifica separadamente se os clipes já foram gerados e se os labels já existem no CSV. Isso garante que em caso de interrupção, o pipeline retome do ponto correto sem regenerar dados já processados nem perder progresso parcial.
+
+\section{Pré-processamento}
+
+\subsection{\texttt{video\_slicer.py} — Fatiamento de Vídeo}
+
+A classe \texttt{VideoSlicer} é responsável por fatiar vídeos em intervalos de tempo. Seu único parâmetro de inicialização é \texttt{n\_slices}, o número de clipes a serem produzidos a partir do vídeo. O método \texttt{get\_intervals} retorna uma lista de tuplas \texttt{(start, end)}, cada uma representando os instantes inicial e final de um intervalo em segundos. O usuário deve fornecer ou a duração desejada de cada intervalo (\texttt{slice\_length}), ou a quantidade desejada de intervalos (\texttt{n\_slices}), nunca os dois simultaneamente. Ao montar os intervalos, o código garante que o \texttt{end} do último clipe não ultrapasse a duração total do vídeo via \texttt{end = min(start + length, total)}.
+
+
+\begin{thebibliography}{9}
+
+\bibitem{soccernet-data}
+SoccerNet.
+\textit{SoccerNet Data}.
+Disponível em: \url{https://www.soccer-net.org/data}.
+Acesso em: \today.
+
+\bibitem{soccernet-github}
+SoccerNet.
+\textit{SoccerNet GitHub Repository}.
+Disponível em: \url{https://github.com/SoccerNet/SoccerNet/tree/main}.
+Acesso em: \today.
+
+\end{thebibliography}
+
+\end{document}
