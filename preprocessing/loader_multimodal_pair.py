@@ -103,7 +103,7 @@ class PairGroupSampler(Sampler):
     def __iter__(self):
         order = list(range(len(self.group_pairs)))
         if self.shuffle:
-            order = torch.randperm(len(self.groups_pairs)).tolist()
+            order = torch.randperm(len(self.group_pairs)).tolist()
         yield from order
 
     def __len__(self):
@@ -166,6 +166,11 @@ class MultiModalDataset(Dataset):
 
             print(f"{len(self.groups)} grupos encontrados.")
 
+        self.is_grayscale = is_grayscale
+        self.video_transform = video_transform
+        self.mel_transform = (mel_transform if mel_transform is not None else default_mel_transform(target_shape))
+        self.dtype = dtype
+
         if self.pair:
             self.low_df = self.df[self.df[score_col] < threshold].reset_index(drop=True)
             self.high_df = self.df[self.df[score_col] >= threshold].reset_index(drop=True)
@@ -210,11 +215,6 @@ class MultiModalDataset(Dataset):
                     self.group_pairs.append((lows[i], highs[i]))
             print(f"{len(self.group_pairs)} pares de grupos criados.\n")
 
-        self.is_grayscale = is_grayscale
-        self.video_transform = video_transform
-        self.mel_transform = (mel_transform if mel_transform is not None else default_mel_transform(target_shape))
-        self.dtype = dtype
-
     def __len__(self):
         if self.pair:
             if self.groups is not None:
@@ -226,38 +226,51 @@ class MultiModalDataset(Dataset):
 
         return len(self.df)
 
-    def _load_sample(self, row):
-        # video
-        video, _, _ = torchvision.io.read_video(row["clip_path"], pts_unit="sec")
-        video = video.to(self.dtype) / 255.
-        video = video.permute(0, 3, 1, 2)
+    def _load_sample(self, row, retry=True):
+        """
+        Carrega uma amostra (vídeo + mel + label).
+        Se o vídeo estiver corrompido, tenta recuperar ou retorna None.
+        """
+        try:
+            # video
+            video, _, _ = torchvision.io.read_video(row["clip_path"], pts_unit="sec")
+            video = video.to(self.dtype) / 255.
+            video = video.permute(0, 3, 1, 2)
 
-        if self.is_grayscale and video.shape[1] == 3:
-            video = video.mean(dim=1, keepdim=True)
+            if self.is_grayscale and video.shape[1] == 3:
+                video = video.mean(dim=1, keepdim=True)
 
-        if self.video_transform is not None:
-            video = self.video_transform(video)
-        
-        mask = torch.ones(video.shape[0], dtype=torch.bool)
+            if self.video_transform is not None:
+                video = self.video_transform(video)
+            
+            mask = torch.ones(video.shape[0], dtype=torch.bool)
+
+        except Exception as e:
+            # Vídeo corrompido — retorna None para re-amostrar
+            return None
 
         # mel
-        mel = np.load(row["mel_path"])
+        try:
+            mel = np.load(row["mel_path"])
 
-        mel_min = mel.min()
-        mel_max = mel.max()
+            mel_min = mel.min()
+            mel_max = mel.max()
 
-        if mel_max > mel_min:
-            mel = (mel - mel_min) / (mel_max - mel_min)
-        else:
-            mel = np.zeros_like(mel)
+            if mel_max > mel_min:
+                mel = (mel - mel_min) / (mel_max - mel_min)
+            else:
+                mel = np.zeros_like(mel)
 
-        mel = torch.tensor(mel, dtype=self.dtype).unsqueeze(0)
+            mel = torch.tensor(mel, dtype=self.dtype).unsqueeze(0)
 
-        if self.mel_transform is not None:
-            mel = self.mel_transform(mel)
+            if self.mel_transform is not None:
+                mel = self.mel_transform(mel)
+
+        except Exception as e:
+            # Mel corrompido — retorna None para re-amostrar
+            return None
 
         # label
-
         score = float(row[self.score_col])
 
         if self.binary_label:
@@ -269,15 +282,29 @@ class MultiModalDataset(Dataset):
 
     def __getitem__(self, idx):
         if not self.pair:
-            row = self.df.iloc[idx]
-            return self._load_sample(row)
+            # Tenta carregar até conseguir um exemplo válido
+            for attempt in range(10):
+                try_idx = idx if attempt == 0 else np.random.randint(len(self.df))
+                row = self.df.iloc[try_idx]
+                sample = self._load_sample(row)
+                if sample is not None:
+                    return sample
+            # Se falhar 10 vezes, retorna dummy
+            raise RuntimeError(f"Não conseguiu carregar amostra válida após 10 tentativas")
 
         # pareamento simples
         if self.groups is None:
-            low_row = self.low_df.iloc[idx % len(self.low_df)]
-            high_row = self.high_df.iloc[np.random.randint(len(self.high_df))]
+            for attempt in range(10):
+                low_row = self.low_df.iloc[np.random.randint(len(self.low_df))]
+                high_row = self.high_df.iloc[np.random.randint(len(self.high_df))]
 
-            return (self._load_sample(low_row), self._load_sample(high_row))
+                low_sample = self._load_sample(low_row)
+                high_sample = self._load_sample(high_row)
+                
+                if low_sample is not None and high_sample is not None:
+                    return (low_sample, high_sample)
+            
+            raise RuntimeError(f"Não conseguiu carregar par válido após 10 tentativas")
 
         # dataset pareado por grupos
         low_group, high_group = self.group_pairs[idx]
@@ -285,7 +312,23 @@ class MultiModalDataset(Dataset):
         low_samples = [self._load_sample(self.low_df.iloc[i]) for i in low_group]
         high_samples = [self._load_sample(self.high_df.iloc[i]) for i in high_group]
 
-        return low_samples, high_samples # video_low, mask_low, mel_low, score_low, video_high, mask_high, mel_high, score_high
+        # Filtra None (amostras corrompidas)
+        low_samples = [s for s in low_samples if s is not None]
+        high_samples = [s for s in high_samples if s is not None]
+
+        if not low_samples or not high_samples:
+            # Se faltar amostras, tenta outro grupo
+            for attempt in range(5):
+                alt_idx = np.random.randint(len(self.group_pairs))
+                alt_low_group, alt_high_group = self.group_pairs[alt_idx]
+                low_samples = [self._load_sample(self.low_df.iloc[i]) for i in alt_low_group]
+                high_samples = [self._load_sample(self.high_df.iloc[i]) for i in alt_high_group]
+                low_samples = [s for s in low_samples if s is not None]
+                high_samples = [s for s in high_samples if s is not None]
+                if low_samples and high_samples:
+                    break
+
+        return low_samples, high_samples
 
     @property
     def scores(self):

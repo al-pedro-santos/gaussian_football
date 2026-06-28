@@ -30,7 +30,6 @@ DEFAULT_OUTPUT_PATH = os.path.join(_PROJECT_ROOT, "data", "labels", "games_index
 
 # --- Geração de identificadores únicos por jogo ---
 
-
 def make_game_id(game_path):
     """A partir do path de um jogo constrói um id simples e legível.
 
