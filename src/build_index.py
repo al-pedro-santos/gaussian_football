@@ -55,12 +55,12 @@ def make_game_id(game_path):
 # --- Construção do índice em CSV ---
 
 
-def build_index(league, splits, local_dir, files, output_path):
+def build_index(leagues, splits, local_dir, files, output_path):
     """Constrói um CSV com informações e caminhos para cada jogo do dataset.
 
     Args:
-        league (str): Código da liga (ex: 'epl'). Deve ser uma chave
-            válida de LEAGUE_PREFIXES.
+        leagues (list[str]): Códigos das ligas (ex: ['epl', 'bundesliga']).
+            Devem ser chaves válidas de LEAGUE_PREFIXES.
         splits (list[str]): Lista de splits a indexar
             (ex: ['train', 'valid', 'test']).
         local_dir (str): Diretório raiz onde os jogos estão armazenados.
@@ -74,29 +74,28 @@ def build_index(league, splits, local_dir, files, output_path):
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    games = get_games(league, splits)
-
     rows = []
-    for split, game_path in games:
+    for league in leagues:
+        games = get_games(league, splits)
 
-        game_dir = os.path.join(local_dir, game_path)
+        for split, game_path in games:
+            game_dir = os.path.join(local_dir, game_path)
+            game_id = make_game_id(game_path)
+            season = game_path.split("/")[1]
 
-        game_id = make_game_id(game_path)
-        season = game_path.split("/")[1]
+            row = {
+                "game_id": game_id,
+                "league": league,
+                "season": season,
+                "split": split,
+            }
 
-        row = {
-            "game_id": game_id,
-            "league": league,
-            "season": season,
-            "split": split,
-        }
+            for f in files:
+                row[f] = os.path.join(game_dir, f)
 
-        for f in files:
-            row[f] = os.path.join(game_dir, f)
+            row["valid"] = game_already_downloaded(local_dir, game_path, files)
 
-        row["valid"] = game_already_downloaded(local_dir, game_path, files)
-
-        rows.append(row)
+            rows.append(row)
 
     if not rows:
         print("Nenhum jogo encontrado.")
@@ -111,6 +110,7 @@ def build_index(league, splits, local_dir, files, output_path):
 
 
 def parse_args():
+    
     parser = argparse.ArgumentParser(
         description="Constrói o games_index.csv a partir dos jogos baixados.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -118,9 +118,10 @@ def parse_args():
     )
     parser.add_argument(
         "--league",
+        nargs="+",
         choices=list(LEAGUE_PREFIXES.keys()),
-        default="epl",
-        help="Liga a ser baixada (default: epl)",
+        default=["epl"],
+        help="Liga(s) a serem indexadas (default: epl)",
     )
     parser.add_argument(
         "--splits",
@@ -151,7 +152,7 @@ def main():
     args = parse_args()
 
     build_index(
-        league=args.league,
+        leagues=args.league,
         local_dir=args.local_dir,
         splits=args.splits,
         files=args.files,

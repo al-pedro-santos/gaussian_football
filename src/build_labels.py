@@ -63,6 +63,33 @@ def extract_goals(labels_path):
 
     return goals
 
+def extract_moments(labels_path):
+    """Extrai os timestamps e tipos de momentos a partir de Labels-v2.json.
+    São considerados gols, chutes ao gol e chutes para fora como momentos.
+
+    Args:
+        labels_path (str): Path do Labels-v2.json de uma partida.
+
+    Returns:
+        list[dict]: Lista de dicionários estruturados com half, seconds e type.
+    """
+    with open(labels_path) as f:
+        data = json.load(f)
+
+    valid_labels = {"Goal", "Shots on target", "Shots off target"}
+    moments = []
+
+    for event in data["annotations"]:
+        if event["label"] in valid_labels:
+            half, seconds = parse_game_time(event["gameTime"])
+            moments.append({
+                "half": half,
+                "seconds": seconds,
+                "type": event["label"]
+            })
+
+    return moments
+
 
 def load_games_index(index_path):
     """Carrega o CSV de índice de jogos e retorna apenas as linhas válidas.
@@ -114,6 +141,43 @@ def goals_to_intervals(
         intervals.append((half, start, end))
     return intervals
 
+def moments_to_intervals(
+    moments_list, duration, current_half, window_before=15, window_after=15
+):
+    """Gera intervalos de tempo ao redor de cada momento de um dado tempo da partida.
+
+    Para cada gol no tempo (half) especificado, cria um intervalo
+    [gol - window_before, gol + window_after], respeitando os limites
+    [0, duration] da metade.
+
+    Args:
+        moments_list (list[tuple[int, int]]): Lista de tuplas (half, seconds)
+            retornada por extract_moments.
+        duration (int): Duração total do tempo atual em segundos.
+        current_half (int): Tempo da partida (1 ou 2).
+        window_before (int): Segundos antes do gol a incluir no intervalo.
+            Default: 15.
+        window_after (int): Segundos após o gol a incluir no intervalo.
+            Default: 15.
+
+    Returns:
+        list[tuple[int, int, int, str]]: Lista de tuplas (half, start, end, type), uma
+            para cada momento do tempo com tipo especificado, start e end em segundos.
+    """
+
+    intervals = []
+
+    for m in moments_list:
+        if m["half"] != current_half:
+            continue
+        
+        seconds = m['seconds']
+        start = max(0, seconds - window_before)
+        end = min(seconds + window_after, duration)
+
+        intervals.append((m["half"], start, end, m["type"]))
+    return intervals
+
 
 def build_arousal_timeline(video_path, intervals, half, fps):
     """Constrói a timeline de arousal de um tempo da partida.
@@ -136,7 +200,7 @@ def build_arousal_timeline(video_path, intervals, half, fps):
 
     half_intervals = []
 
-    for h, start, end in intervals:
+    for h, start, end, type in intervals:
         if h != half:
             continue
 
@@ -236,9 +300,14 @@ def build_labels(
             e 'arousal_score'.
     """
     labels_path = os.path.join(game_dir, "Labels-v2.json")
-    goals = extract_goals(labels_path)
-
+    moments_list = extract_moments(labels_path)
     rows = []
+
+    all_game_goals = sorted([m for m in moments_list if m["type"] == "Goal"], key=lambda x: (x["half"], x["seconds"]))
+    all_game_shots = sorted([m for m in moments_list if m["type"] in ["Shots on target", "Shots off target"]], key=lambda x: (x["half"], x["seconds"]))
+
+    bg_block_counter = 0
+    last_was_event = False
 
     for half in [1, 2]:
         video_path = os.path.join(game_dir, f"{half}_224p.mkv")
@@ -246,8 +315,11 @@ def build_labels(
         with VideoFileClip(video_path) as video:
             duration = math.floor(video.duration)
 
-        intervals = goals_to_intervals(
-            goals,
+        half_moments = [m for m in moments_list if m["half"] == half]
+        goal_moments = [m for m in half_moments if m["type"] == "Goal"]
+
+        intervals = moments_to_intervals(
+            goal_moments,
             duration,
             half,
             window_before=window_before,
@@ -266,9 +338,8 @@ def build_labels(
 
         for idx, (start, end) in enumerate(
             tqdm(intervals_per_half[half], desc=f"Half {half}")
-        ):
+        ):  
             clip_file = clip_files[idx]
-
             clip_path = os.path.join(video_dir, clip_file)
             mel_path = os.path.join(mel_dir, clip_file.replace(".mp4", ".npy"))
 
@@ -280,35 +351,63 @@ def build_labels(
 
             arousal_score = float(np.max(timeline[start_frame:end_frame]))
 
+            clip_type = "Background"
+            event_id = "Background"
+            
+            if half_moments:
+                clip_center = (start + end) / 2
+                closest_event = min(half_moments, key=lambda m: abs(m["seconds"] - clip_center))
+                distance = abs(closest_event["seconds"] - clip_center)
+                
+                if distance <= max(window_before, window_after):
+                    if closest_event["type"] == "Goal":
+                        clip_type = "goal"
+                        goal_idx = all_game_goals.index(closest_event)
+                        event_id = f"goal_{goal_idx}"
+                    elif closest_event["type"] in ["Shots on target", "Shots off target"]:
+                        clip_type = "shot"
+                        shot_idx = all_game_shots.index(closest_event)
+                        event_id = f"shot_{shot_idx}"
+
             rows.append(
                 {
                     "clip_path": clip_path,
                     "mel_path": mel_path,
                     "arousal_score": arousal_score,
+                    "type": clip_type,
+                    "event_id": event_id,
                 }
             )
 
     return rows
 
-
 def main():
     """Executa o pipeline de geração de clipes e labels para todos os jogos.
 
     Lê o índice de jogos válidos, fatia cada partida via VideoSlicer, gera os
-    clipes e calcula os arousal scores, colocando tudo em um CSV.  Pula
+    clipes e calcula os arousal scores, colocando tudo em um CSV. Pula
     clipes e labels já existentes de forma independente, evitando reprocessamento.
 
+    Uso:
+        python src/build_labels.py
+        python src/build_labels.py --league epl --output data/labels/labels_epl.csv
+        python src/build_labels.py --league bundesliga --output data/labels/labels_bundesliga.csv
+        python src/build_labels.py --only_labels
+
     Argumentos de linha de comando:
+        --league:        Filtra por liga(s) específicas (default: todas do index).
         --index_path:    Caminho do games_index.csv de entrada.
         --processed_dir: Diretório raiz onde os clipes são salvos.
         --fps:           Frames por segundo dos clipes. Default: 25.
-        --n_slices:      Clipes por tempo da partida. Default: 330.
+        --n_slices:      Clipes por tempo da partida. Default: 750.
         --window_before: Segundos antes do gol na janela. Default: 15.
         --window_after:  Segundos após o gol na janela. Default: 15.
-        --output:        Caminho do labels_all.csv de saída.
+        --output:        Caminho do labels_all.csv (ou parcial) de saída.
+        --only_labels:   Pula geração de clips, só recalcula os labels.
     """
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--league", nargs="+", default=None, help="Filtra por liga(s) específicas (default: todas do index)")
     parser.add_argument("--index_path", default="data/labels/games_index.csv")
     parser.add_argument("--processed_dir", default=DEFAULT_PROCESSED_DIR)
     parser.add_argument("--fps", type=int, default=25)
@@ -317,10 +416,14 @@ def main():
     parser.add_argument("--window_after", type=int, default=15)
     parser.add_argument("--output", default="data/labels/labels_all.csv")
     parser.add_argument("--only_labels", action="store_true", help="Pula geração de clips, só recalcula os labels.")
+    parser.add_argument("--dry_run", action="store_true", help="Lista os jogos que seriam processados, sem gerar clips ou labels.")
     args = parser.parse_args()
 
     slicer = VideoSlicer(n_slices=args.n_slices)
     games = load_games_index(args.index_path)
+
+    if args.league:
+        games = [g for g in games if g["league"] in args.league]
 
     total_games = len(games)
     games_processados = 0
@@ -330,6 +433,27 @@ def main():
     print(f"Total de jogos no index: {total_games}")
 
     all_rows = []
+    if os.path.exists(args.output):
+        all_rows = pd.read_csv(args.output).to_dict("records")
+
+    existing_game_ids = {row["game_id"] for row in all_rows}
+
+    if args.dry_run:
+        skip_count = sum(1 for g in games if g["game_id"] in SKIP_GAMES)
+        a_processar = [
+            g["game_id"] for g in games
+            if g["game_id"] not in SKIP_GAMES and g["game_id"] not in existing_game_ids
+        ]
+
+        print(f"\nDry run — nenhum clip ou label será gerado.")
+        print(f"  Total no index (após filtro de liga): {total_games}")
+        print(f"  Já no CSV de labels:                  {len(existing_game_ids)}")
+        print(f"  Na lista de exclusão:                 {skip_count}")
+        print(f"  A processar nesta execução:           {len(a_processar)}")
+        for game_id in a_processar:
+            print(f"    {game_id}")
+        return
+
     for i, game in enumerate(games, 1):
         print(f"\n[{i}/{total_games}] {game['game_id']} {game['split']}")
 
@@ -369,17 +493,10 @@ def main():
             print(f" Vai gerar clips agora para {game['game_id']}")
             generate_clips(game_dir, clips_dir, intervals_per_half, fps=args.fps)
 
-        if os.path.exists(args.output):
-            df_existing = pd.read_csv(args.output)
-            if game["game_id"] in df_existing["game_id"].values:
-                print(f" Labels já existem, pulando...")
-                all_rows.extend(
-                    df_existing[df_existing["game_id"] == game["game_id"]].to_dict(
-                        "records"
-                    )
-                )
-                games_processados += 1
-                continue
+        if game["game_id"] in existing_game_ids:
+            print(" Labels já existem, pulando...")
+            games_processados += 1
+            continue
 
         rows = build_labels(
             game_dir,

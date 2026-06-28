@@ -15,6 +15,7 @@ class ResNetLSTM_MultiModal(nn.Module):
         use_fusion: bool = True,
         use_dropout: bool = False,
         dropout_p: float = 0.3,
+        LSTM_bidirectional : bool = True
     ):
         super().__init__()
 
@@ -63,7 +64,7 @@ class ResNetLSTM_MultiModal(nn.Module):
             hidden_size,
             num_layers=num_layers,
             batch_first=True,
-            bidirectional=True,
+            bidirectional=LSTM_bidirectional,
             dropout=dropout_p if num_layers > 1 else 0,
         )
 

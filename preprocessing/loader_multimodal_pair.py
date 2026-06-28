@@ -4,11 +4,13 @@ import numpy as np
 import pandas as pd
 
 import random
+from torch.utils.data import Sampler
 import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from torchvision.transforms import v2
 import torchvision
+from collections import defaultdict
 
 from datasets_mel_video import default_mel_transform
 
@@ -67,11 +69,53 @@ split_pt = {
 }
 
 # Classes Principais
+class GroupSampler(Sampler):
+    '''
+    Fazer shuffle de acordo com os grupos (janelas)
+    '''
+    def __init__(self, groups, shuffle=True):
+        self.groups = groups
+        self.shuffle = shuffle
+
+    def __iter__(self):
+        if self.shuffle:
+            order = torch.randperm(len(self.groups)).tolist()
+        else:
+            order = range(len(self.groups))
+
+        for g in order:
+            yield from self.groups[g]
+
+    def __len__(self):
+        return sum(len(g) for g in self.groups)
+    
+
+class PairGroupSampler(Sampler):
+    """
+    Faz shuffle entre os pares de grupos.
+    Exclusivo para a loss margin ranking
+    """
+
+    def __init__(self, group_pairs, shuffle=True):
+        self.group_pairs = group_pairs
+        self.shuffle = shuffle
+
+    def __iter__(self):
+        order = list(range(len(self.group_pairs)))
+        if self.shuffle:
+            order = torch.randperm(len(self.groups_pairs)).tolist()
+        yield from order
+
+    def __len__(self):
+        return len(self.group_pairs)
+
 
 class MultiModalDataset(Dataset):
     def __init__(
         self,
         csv_path,
+        groups=False,
+        column_groups_id=None,  # Nome da coluna que identifica os grupos. Amostras com o mesmo valor pertencem ao mesmo grupo e permanecem na ordem original
         pair=False,
         split=None,
         score_col="arousal_score",
@@ -105,12 +149,66 @@ class MultiModalDataset(Dataset):
         self.threshold = threshold
         self.pair = pair
 
+        self.column_groups_id = column_groups_id
+        self.groups = None
+        self.group_pairs = None
+
+        if groups:
+            if column_groups_id is None:
+                raise ValueError("column_groups_id deve ser informado quando groups=True.")
+            
+            grouped = defaultdict(list)
+
+            for idx, row in self.df.iterrows():
+                grouped[row[column_groups_id]].append(idx)
+
+            self.groups = list(grouped.values())
+
+            print(f"{len(self.groups)} grupos encontrados.")
+
         if self.pair:
             self.low_df = self.df[self.df[score_col] < threshold].reset_index(drop=True)
             self.high_df = self.df[self.df[score_col] >= threshold].reset_index(drop=True)
 
             print(f"Low: {len(self.low_df)}")
             print(f"High: {len(self.high_df)}\n")
+
+            # Caso não existam grupos, pareamento antigo
+            if not groups:
+                print("Pareamento aleatório.\n")
+                return
+
+            low_groups = defaultdict(list)
+            for idx, row in self.low_df.iterrows():
+                low_groups[row[column_groups_id]].append(idx)
+
+            high_groups = defaultdict(list)
+            for idx, row in self.high_df.iterrows():
+                high_groups[row[column_groups_id]].append(idx)
+
+            # organiza por tamanho para compatibilidade entre as janelas
+            low_by_size = defaultdict(list)
+
+            for g in low_groups.values():
+                low_by_size[len(g)].append(g)
+
+            high_by_size = defaultdict(list)
+
+            for g in high_groups.values():
+                high_by_size[len(g)].append(g)
+
+            # pareamento apenas de grupos de mesmo tamanho para o margin ranking
+            self.group_pairs = []
+
+            for size in low_by_size:
+                if size not in high_by_size:
+                    continue
+                lows = low_by_size[size]
+                highs = high_by_size[size]
+                n = min(len(lows), len(highs))
+                for i in range(n):
+                    self.group_pairs.append((lows[i], highs[i]))
+            print(f"{len(self.group_pairs)} pares de grupos criados.\n")
 
         self.is_grayscale = is_grayscale
         self.video_transform = video_transform
@@ -119,7 +217,13 @@ class MultiModalDataset(Dataset):
 
     def __len__(self):
         if self.pair:
-            return max(len(self.low_df), len(self.high_df)) # é balanceado, entãoé esperado que sejam de mesmo tamanho
+            if self.groups is not None:
+                return len(self.group_pairs)
+            return max(len(self.low_df), len(self.high_df))
+
+        if self.groups is not None:
+            return len(self.df)  # o sampler controla a ordem
+
         return len(self.df)
 
     def _load_sample(self, row):
@@ -168,18 +272,23 @@ class MultiModalDataset(Dataset):
             row = self.df.iloc[idx]
             return self._load_sample(row)
 
-        # modo pareado:
-        low_row = self.low_df.iloc[idx % len(self.low_df)]
-        high_row = self.high_df.iloc[np.random.randint(len(self.high_df))]
+        # pareamento simples
+        if self.groups is None:
+            low_row = self.low_df.iloc[idx % len(self.low_df)]
+            high_row = self.high_df.iloc[np.random.randint(len(self.high_df))]
 
-        low_sample = self._load_sample(low_row)
-        high_sample = self._load_sample(high_row)
+            return (self._load_sample(low_row), self._load_sample(high_row))
 
-        return low_sample, high_sample # video_low, mask_low, mel_low, score_low, video_high, mask_high, mel_high, score_high
+        # dataset pareado por grupos
+        low_group, high_group = self.group_pairs[idx]
+
+        low_samples = [self._load_sample(self.low_df.iloc[i]) for i in low_group]
+        high_samples = [self._load_sample(self.high_df.iloc[i]) for i in high_group]
+
+        return low_samples, high_samples # video_low, mask_low, mel_low, score_low, video_high, mask_high, mel_high, score_high
 
     @property
     def scores(self):
-
         vals = self.df[self.score_col].values.astype(float)
 
         if self.binary_label:
@@ -232,6 +341,8 @@ def build_multimodal_dataloader(
     batch_size,
     shuffle,
     num_workers,
+    groups=False,
+    column_groups_id=None,
     score_col="arousal_score",
     binary_label=False,
     threshold=0.5,
@@ -242,9 +353,13 @@ def build_multimodal_dataloader(
     dtype=torch.float32,
     pin_memory=False,
 ):
+    if groups and column_groups_id is None:
+        raise ValueError("column_groups_id deve ser informado quando groups=True.")
 
     dataset = MultiModalDataset(
         csv_path=csv_path,
+        groups=groups,
+        column_groups_id=column_groups_id,
         pair=pair,
         split=split,
         score_col=score_col,
@@ -257,15 +372,23 @@ def build_multimodal_dataloader(
         dtype=dtype,
     )
 
-    if pair:
-        collate_fn = multimodal_pair_collate_fn
-    else:
-        collate_fn = multimodal_collate_fn
+    sampler = None
+
+    if groups:
+        if pair: # grupos pareados para o margin ranking
+            sampler = PairGroupSampler(dataset.group_pairs, shuffle=shuffle,)
+        else: # os grupos não serão usados no margin ranking
+            sampler = GroupSampler(dataset.groups, shuffle=shuffle,)
+        # sampler e shuffle são mutuamente exclusivos
+        shuffle = False # o sampler já faz o shuffle entre os grupos a cada época, então o do DataLoader do torch é desativado
+
+    collate_fn = (multimodal_pair_collate_fn if pair else multimodal_collate_fn)
 
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=pin_memory,
         collate_fn=collate_fn,
