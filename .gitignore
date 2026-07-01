@@ -1,9 +1,11 @@
 # credenciais
 .env
+.venvteste
 
 # dados brutos e processados
 data/processed/
 data/raw/
+data/balanced_datasets/
 
 # arquivos de trabalho em progresso
 wip/

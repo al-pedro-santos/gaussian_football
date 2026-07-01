@@ -84,6 +84,12 @@ class ResNetLSTM_MultiModal(nn.Module):
                      nn.Dropout(dropout_p) if use_dropout else nn.Identity(),
                  )
 
+    # travar sempre o audio_encoder em eval (não vou treinando isso)
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.audio_encoder.eval() 
+        return self
+
     def forward(self, video, mel):
         # o mel já deve ter sido processado com F.interpolate(mel, size=(128, 1024), mode="bilinear", align_corners=False) para ajustar o shape
 
