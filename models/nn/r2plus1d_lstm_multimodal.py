@@ -31,6 +31,10 @@ class R2Plus1DLSTM_MultiModal(nn.Module):
         in_channels: int = 1, # 1 = grayscale
         pretrained: bool = True,
         use_grad_checkpoint: bool = False,
+        audio_chunk_size: int = 16,  # processa o AudioMAE em blocos de até N
+                                      # espectrogramas por vez, em vez de
+                                      # B*T_mel de uma só passada — evita pico
+                                      # de memória quando o grupo (B) é grande
     ):
         super().__init__()
 
@@ -72,6 +76,7 @@ class R2Plus1DLSTM_MultiModal(nn.Module):
 
         self.frame_step = frame_step
         self.use_grad_checkpoint = use_grad_checkpoint
+        self.audio_chunk_size = max(1, int(audio_chunk_size))
 
         # Áudio (AudioMAE congelado)
         self.audio_encoder = audiomae.encoder
@@ -131,8 +136,13 @@ class R2Plus1DLSTM_MultiModal(nn.Module):
 
     def forward(self, video, mel):
         # video: (B, T, C, H, W), C deve ser igual a in_channels (1 = grayscale)
-        if self.frame_step > 1:
-            video = video[:, ::self.frame_step]
+        # OBS: a subamostragem temporal (frame_step) já é feita no
+        # MultiModalDataset._load_sample (loader_multimodal_frac2.py), antes
+        # do vídeo chegar aqui. Aplicá-la de novo aqui subamostraria em
+        # frame_step**2, reduzindo a sequência mais do que o esperado sem
+        # nenhum ganho de memória real (o tensor já chega menor do disco).
+        # Por isso o corte foi removido daqui; self.frame_step é mantido só
+        # para compatibilidade com código externo que leia esse atributo.
 
         # Conv3d espera (B, C, T, H, W)
         video = video.permute(0, 2, 1, 3, 4).contiguous()
@@ -148,8 +158,17 @@ class R2Plus1DLSTM_MultiModal(nn.Module):
         mel = F.interpolate(mel, size=(128, 1024), mode="bilinear", align_corners=False)
         mel = mel.transpose(2, 3)  # (B * T_mel, 1, 1024, 128)
 
+        # Processa o AudioMAE em blocos: sob torch.no_grad() não há grafo pra
+        # backward, mas o forward de um transformer com B*T_mel linhas de
+        # uma vez só ainda aloca ativações proporcionais a esse total. Se o
+        # grupo (B) for grande, isso sozinho pode estourar a VRAM. Processar
+        # em chunks limita o pico sem mudar o resultado.
+        chunks = []
         with torch.no_grad():
-            audio_feat = self.audio_encoder.forward_features(mel)
+            for start in range(0, mel.shape[0], self.audio_chunk_size):
+                chunk = mel[start:start + self.audio_chunk_size]
+                chunks.append(self.audio_encoder.forward_features(chunk))
+        audio_feat = torch.cat(chunks, dim=0)
 
         audio_feat = audio_feat[:, 0]  # CLS token
         audio_feat = self.audio_projection(audio_feat)  # (B*T_mel, audio_out_dim)

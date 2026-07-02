@@ -153,6 +153,8 @@ class MultiModalDataset(Dataset):
         mel_transform=None,
         frame_step=1,
         dtype=torch.float32,
+        max_clips_per_group=None,  # teto de clipes por grupo (evita OOM em
+                                    # janelas grandes); None = sem limite
     ):
 
         self.df = pd.read_csv(csv_path)
@@ -198,6 +200,7 @@ class MultiModalDataset(Dataset):
         self.mel_transform = (mel_transform if mel_transform is not None else default_mel_transform(target_shape))
         self.dtype = dtype
         self.frame_step = max(1, int(frame_step))
+        self.max_clips_per_group = max_clips_per_group
 
         if self.pair:
             self.low_df = self.df[self.df[score_col] < threshold].reset_index(drop=True)
@@ -338,6 +341,8 @@ class MultiModalDataset(Dataset):
 
         # dataset pareado por grupos
         low_group, high_group = self.group_pairs[idx]
+        low_group = self._subsample_group(low_group)
+        high_group = self._subsample_group(high_group)
 
         low_samples = [self._load_sample(self.low_df.iloc[i]) for i in low_group]
         high_samples = [self._load_sample(self.high_df.iloc[i]) for i in high_group]
@@ -351,6 +356,8 @@ class MultiModalDataset(Dataset):
             for attempt in range(5):
                 alt_idx = np.random.randint(len(self.group_pairs))
                 alt_low_group, alt_high_group = self.group_pairs[alt_idx]
+                alt_low_group = self._subsample_group(alt_low_group)
+                alt_high_group = self._subsample_group(alt_high_group)
                 low_samples = [self._load_sample(self.low_df.iloc[i]) for i in alt_low_group]
                 high_samples = [self._load_sample(self.high_df.iloc[i]) for i in alt_high_group]
                 low_samples = [s for s in low_samples if s is not None]
@@ -359,6 +366,16 @@ class MultiModalDataset(Dataset):
                     break
 
         return low_samples, high_samples
+
+    def _subsample_group(self, group_indices):
+        """Limita o tamanho de um grupo a max_clips_per_group, sorteando um
+        subconjunto quando o grupo excede o teto. Isso evita que janelas
+        muito longas (muitos clipes com o mesmo window_id) virem um "batch"
+        gigante e imprevisível dentro da CNN 3D — a causa mais comum de OOM
+        esporádico quando groups=True."""
+        if self.max_clips_per_group is None or len(group_indices) <= self.max_clips_per_group:
+            return group_indices
+        return list(np.random.choice(group_indices, size=self.max_clips_per_group, replace=False))
 
     @property
     def scores(self):
@@ -433,6 +450,7 @@ def build_multimodal_dataloader(
     pin_memory=False,
     epoch_frac=1.0,
     frame_step=1,  # subamostragem de frames — repassado ao MultiModalDataset
+    max_clips_per_group=None,  # teto de clipes por grupo — repassado ao MultiModalDataset
 ):
     """
     epoch_frac: fração (0 < epoch_frac <= 1) dos grupos/pares de grupos usados
@@ -464,6 +482,7 @@ def build_multimodal_dataloader(
         mel_transform=mel_transform,
         dtype=dtype,
         frame_step=frame_step,
+        max_clips_per_group=max_clips_per_group,
     )
 
     sampler = None
